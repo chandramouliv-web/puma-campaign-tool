@@ -361,7 +361,23 @@ def make_lazada_output(ids): return _to_excel(pd.DataFrame({"SHOP SKU": ids}))
 def make_shopee_output(ids): return _to_excel(pd.DataFrame({"Product ID": ids}))
 def make_zalora_output(ann): return _to_excel(ann, sheet="Eligible Products")
 
+def calculate_campaign_price(rrp, srp, voucher_pct):
+    """
+    If SRP = 0 use RRP.
+    Otherwise use discounted SRP.
+    """
+    try:
+        rrp = float(rrp)
+        srp = float(srp)
+        voucher_pct = float(voucher_pct)
 
+        base_price = rrp if srp == 0 else srp
+        campaign_price = round(base_price * (1 - voucher_pct / 100), 2)
+
+        return campaign_price
+
+    except:
+        return None
 # ─────────────────────────────────────────────────────────────────
 # STREAMLIT UI
 # ─────────────────────────────────────────────────────────────────
@@ -396,7 +412,51 @@ def main():
         vt = "Bundle Discount" if voucher_type == "Bundle Discount" else "Regular VC"
         st.success(f"Will generate: **{', '.join(str(p)+'%' for p in voucher_pcts)} "
                    f"{vt}** — **{region} / {marketplace}**")
+# ─────────────────────────────────────────────
+# CAMPAIGN PRICE CALCULATOR
+# ─────────────────────────────────────────────
 
+st.markdown("---")
+st.subheader("③ Campaign Price Calculator")
+
+cp1, cp2, cp3 = st.columns(3)
+
+with cp1:
+    calc_rrp = st.number_input(
+        "RRP",
+        min_value=0.0,
+        value=1000.0,
+        step=1.0
+    )
+
+with cp2:
+    calc_srp = st.number_input(
+        "SRP (0 = use RRP)",
+        min_value=0.0,
+        value=800.0,
+        step=1.0
+    )
+
+with cp3:
+    calc_voucher = st.number_input(
+        "Voucher %",
+        min_value=0.0,
+        max_value=100.0,
+        value=20.0,
+        step=1.0
+    )
+
+campaign_price = calculate_campaign_price(
+    calc_rrp,
+    calc_srp,
+    calc_voucher
+)
+
+if campaign_price is not None:
+    st.success(
+        f"Campaign Price = {campaign_price:,.2f}"
+    )
+    
     # ── ③ FILE UPLOADS ───────────────────────────────────────────
     st.markdown("---")
     st.subheader("③ Upload Files")
