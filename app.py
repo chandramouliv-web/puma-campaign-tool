@@ -301,6 +301,7 @@ def _extract_ean(sku_val, parent_val):
                 if re.match(r"^\d{13}$", s): return s
     return None
 
+
 def _pid_eligible(combined, ok_eans, excl_eans):
     combined = combined.copy()
     combined["_ean"] = combined.apply(
@@ -418,7 +419,7 @@ def main():
 
     # ── ③b COLUMN SELECTORS (after ZeCom upload) ─────────────────
     excl_idx = rrp_idx = srp_idx = zecom_df = None
-    voucher_remark_map = {}
+    eligible_remarks = set()
     include_no_remark = False
 
     if zecom_file:
@@ -471,61 +472,75 @@ def main():
             f"SRP > 0 but < {cfg_cur} → excluded"
         )
 
-        # ── ③c REMARK SELECTION ──────────────────────────────
+        # ── ③c REMARK SELECTION ───────────────────────────────────
         st.markdown("---")
-        st.subheader("③c Select Eligible Remarks")
+        st.subheader("③c  Select Eligible Remarks")
+
         unique_remarks = get_unique_remarks(zecom_df, excl_idx)
+
         if not unique_remarks:
-            st.warning(
-                "No remarks found in the selected exclusion column."
-            )
+            st.warning("No remarks found in the selected exclusion column. "
+                       "Check that you selected the right column above.")
         else:
             st.caption(
-                f"Found {len(unique_remarks)} unique remarks in the selected column."
+                f"Found **{len(unique_remarks)} unique remarks** in the selected column. "
+                "Tick the ones that should count as **eligible** for this voucher campaign."
             )
-            
-        voucher_remark_map = {}
-        for pct in voucher_pcts:
-            st.markdown(f"### 🎟️ {pct}% Voucher")
-            state_key = f"remarks_{pct}"
-            if state_key not in st.session_state:
-            st.session_state[state_key] = []
-            c1, c2 = st.columns(2)
 
-        with c1:
-            if st.button(
-                f"✅ Select All ({pct}%)",
-                key=f"all_{pct}"
-            ):
-                st.session_state[state_key] = unique_remarks[:]
+            # Quick-select helper buttons
+            qc1, qc2, _ = st.columns([1, 1, 4])
+            with qc1:
+                select_all = st.button("✅ Select All")
+            with qc2:
+                clear_all  = st.button("❌ Clear All")
 
-        with c2:
-            if st.button(
-                f"❌ Clear All ({pct}%)",
-                key=f"clear_{pct}"
-            ):
-                st.session_state[state_key] = []
+            # Manage selection state
+            if "remark_selection" not in st.session_state:
+                st.session_state.remark_selection = []
+            if select_all:
+                st.session_state.remark_selection = unique_remarks[:]
+            if clear_all:
+                st.session_state.remark_selection = []
 
-        selected = st.multiselect(
-            f"Eligible Remarks for {pct}%",
-            options=unique_remarks,
-            default=st.session_state[state_key],
-            key=f"multi_{pct}"
-        )
+            # Clamp stored selection to what actually exists in this column
+            valid_prev = [r for r in st.session_state.remark_selection
+                          if r in unique_remarks]
 
-        st.session_state[state_key] = selected
-        voucher_remark_map[pct] = set(selected)
-        st.success(
-            f"{len(selected)} remarks selected for {pct}%"
-        )
+            selected_remarks_list = st.multiselect(
+                "Eligible remarks",
+                options=unique_remarks,
+                default=valid_prev,
+                key="remarks_ms",
+                label_visibility="collapsed",
+                help="Only articles whose exclusion remark is selected here will be eligible.",
+            )
+            st.session_state.remark_selection = selected_remarks_list
+            eligible_remarks = set(selected_remarks_list)
 
-    st.markdown("&nbsp;")
-    include_no_remark = st.checkbox(
-        "Include articles with blank / no remark "
-        "(they will be flagged as No Remark in Zalora output)",
-        value=False,
-        key="incl_nr",
-    )
+            # Live preview count
+            if eligible_remarks:
+                # MP flag filter first (quick preview)
+                mp_col = cfg["mp_flags"].get(marketplace)
+                df_preview = zecom_df
+                if mp_col and mp_col in zecom_df.columns:
+                    df_preview = zecom_df[zecom_df[mp_col].astype(str).str.strip().str.upper() == "YES"]
+                n_match = df_preview.iloc[:, excl_idx].astype(str).str.strip().isin(eligible_remarks).sum()
+                st.info(f"📊 **{n_match:,}** articles with {marketplace}=YES have one of the "
+                        f"selected remarks (before price & stock filter).")
+            else:
+                st.warning("⚠️ No remarks selected — no articles will be eligible. "
+                           "Select at least one remark above.")
+
+            # No-remark checkbox
+            st.markdown("&nbsp;")
+            include_no_remark = st.checkbox(
+                "Include articles with **blank / no remark** "
+                "(they will be flagged as *No Remark* in the Zalora output, "
+                "and will NOT cause PID-level exclusion on Shopee / TikTok)",
+                value=False,
+                key="incl_nr",
+            )
+
     # ── ④ GENERATE ───────────────────────────────────────────────
     st.markdown("---")
     st.subheader("④ Generate")
@@ -536,59 +551,34 @@ def main():
     if not inv_file:     missing.append("Inventory File")
     if not mp_file:      missing.append(f"{marketplace} Export")
     if not voucher_pcts: missing.append("Voucher %")
-    if zecom_file and voucher_pcts:
-    missing_pct = []
+    if zecom_file and not eligible_remarks:
+        missing.append("At least one eligible remark (③c)")
 
-    for pct in voucher_pcts:
-        if len(voucher_remark_map.get(pct, set())) == 0:
-            missing_pct.append(str(pct))
-
-    if missing_pct:
-        missing.append(
-            f"Remarks missing for {', '.join(missing_pct)}%"
-        )
-        
     if missing:
         st.info(f"Still needed: **{', '.join(missing)}**")
 
     ready = not missing
 
-        if st.button("🚀 Generate Eligible SKU Lists", disabled=not ready, type="primary"):
+    if st.button("🚀 Generate Eligible SKU Lists", disabled=not ready, type="primary"):
         _run(
-            zecom_file,
-            content_file,
-            inv_file,
-            mp_file,
-            region,
-            marketplace,
-            excl_idx,
-            rrp_idx,
-            srp_idx,
-            voucher_remark_map,
-            include_no_remark,
-            voucher_pcts,
-            voucher_type,
+            zecom_file, content_file, inv_file, mp_file,
+            region, marketplace,
+            excl_idx, rrp_idx, srp_idx,
+            eligible_remarks, include_no_remark,
+            voucher_pcts, voucher_type,
         )
+
 
 # ─────────────────────────────────────────────────────────────────
 # PROCESSING PIPELINE
 # ─────────────────────────────────────────────────────────────────
 
-def _run(
-    zecom_file,
-    content_file,
-    inv_file,
-    mp_file,
-    region,
-    marketplace,
-    excl_idx,
-    rrp_idx,
-    srp_idx,
-    voucher_remark_map,
-    include_no_remark,
-    voucher_pcts,
-    voucher_type
-):
+def _run(zecom_file, content_file, inv_file, mp_file,
+         region, marketplace,
+         excl_idx, rrp_idx, srp_idx,
+         eligible_remarks, include_no_remark,
+         voucher_pcts, voucher_type):
+
     vtype = "bundle" if voucher_type == "Bundle Discount" else "regular"
 
     with st.status("Processing…", expanded=True) as status:
@@ -629,26 +619,15 @@ def _run(
             status.update(label="❌ Error", state="error"); return
 
         # 4. Process each voucher %
-                results = {}
-
+        results = {}
         for pct in voucher_pcts:
-
-            eligible_remarks = voucher_remark_map.get(pct, set())
-
-            st.write(
-                f"⚙️ **{pct}% {voucher_type}** — "
-                f"using {len(eligible_remarks)} selected remark(s)…"
-            )
+            st.write(f"⚙️  **{pct}% {voucher_type}** — "
+                     f"using {len(eligible_remarks)} selected remark(s)…")
 
             art = process_zecom(
-                zecom_df,
-                region,
-                marketplace,
-                excl_idx,
-                rrp_idx,
-                srp_idx,
-                eligible_remarks,
-                include_no_remark,
+                zecom_df, region, marketplace,
+                excl_idx, rrp_idx, srp_idx,
+                eligible_remarks, include_no_remark,
             )
             n_elig  = (art["remark_status"] == "eligible").sum()
             n_nr    = (art["remark_status"] == "no_remark").sum()
