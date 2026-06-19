@@ -547,34 +547,33 @@ def main():
             )
 
     # ── ④ GENERATE ───────────────────────────────────────────────
-    # ── ④ GENERATE ───────────────────────────────────────────────
-st.markdown("---")
-st.subheader("④ Generate")
+        st.markdown("---")
+        st.subheader("④ Generate")
 
-# Validation
-missing = []
+        # Validation
+        missing = []
 
-if not zecom_file:
-    missing.append("ZeCom Tracker")
+        if not zecom_file:
+        missing.append("ZeCom Tracker")
+    
+        if not content_file:
+        missing.append("Content File")
 
-if not content_file:
-    missing.append("Content File")
+        if not inv_file:
+        missing.append("Inventory File")
 
-if not inv_file:
-    missing.append("Inventory File")
+        if not mp_file:
+        missing.append(f"{marketplace} Export")
 
-if not mp_file:
-    missing.append(f"{marketplace} Export")
-
-if not voucher_pcts:
-    missing.append("Voucher %")
+        if not voucher_pcts:
+        missing.append("Voucher %")
 
 # Check remarks selected for each voucher %
-if voucher_pcts:
-    missing_pct = []
+        if voucher_pcts:
+        missing_pct = []
 
-    for pct in voucher_pcts:
-        remarks = voucher_remark_map.get(pct, [])
+        for pct in voucher_pcts:
+            remarks = voucher_remark_map.get(pct, [])
 
         if len(remarks) == 0:
             missing_pct.append(f"{pct}%")
