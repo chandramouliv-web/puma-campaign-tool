@@ -849,9 +849,9 @@ else:
         state="error"
     )
 
-return
+    return
 
-    # ── ⑤ DOWNLOAD ───────────────────────────────────────────────
+# ── ⑤ DOWNLOAD ───────────────────────────────────────────────
     st.markdown("---")
     st.write("Results Generated:")
     st.write(list(results.keys()))
