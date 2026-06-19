@@ -301,7 +301,6 @@ def _extract_ean(sku_val, parent_val):
                 if re.match(r"^\d{13}$", s): return s
     return None
 
-
 def _pid_eligible(combined, ok_eans, excl_eans):
     combined = combined.copy()
     combined["_ean"] = combined.apply(
@@ -475,29 +474,21 @@ def main():
         # ── ③c REMARK SELECTION ──────────────────────────────
         st.markdown("---")
         st.subheader("③c Select Eligible Remarks")
-
-unique_remarks = get_unique_remarks(zecom_df, excl_idx)
-
-if not unique_remarks:
-    st.warning(
-        "No remarks found in the selected exclusion column."
-    )
-
-else:
-
-    st.caption(
-        f"Found {len(unique_remarks)} unique remarks in the selected column."
-    )
-
-    voucher_remark_map = {}
-
-    for pct in voucher_pcts:
-
-        st.markdown(f"### 🎟️ {pct}% Voucher")
-
-        state_key = f"remarks_{pct}"
-
-        if state_key not in st.session_state:
+        unique_remarks = get_unique_remarks(zecom_df, excl_idx)
+        if not unique_remarks:
+            st.warning(
+                "No remarks found in the selected exclusion column."
+            )
+        else:
+            st.caption(
+                f"Found {len(unique_remarks)} unique remarks in the selected column."
+            )
+            
+        voucher_remark_map = {}
+        for pct in voucher_pcts:
+            st.markdown(f"### 🎟️ {pct}% Voucher")
+            state_key = f"remarks_{pct}"
+            if state_key not in st.session_state:
             st.session_state[state_key] = []
 
         c1, c2 = st.columns(2)
@@ -523,7 +514,7 @@ else:
             key=f"multi_{pct}"
         )
 
-         st.session_state[state_key] = selected
+        st.session_state[state_key] = selected
         voucher_remark_map[pct] = set(selected)
         st.success(
             f"{len(selected)} remarks selected for {pct}%"
