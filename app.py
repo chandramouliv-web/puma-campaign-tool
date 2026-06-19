@@ -698,53 +698,43 @@ def _run(zecom_file, content_file, inv_file, mp_file,
                 st.write(
                     f"EANs in stock & eligible: {n_ok:,}"
                 )
-
-    if n_ok == 0:
-        st.warning(
-            f"No in-stock eligible EANs — skipping {pct}%"
-        )
-        continue
-
-    try:
-
-        if marketplace == "Lazada":
-
-            ids = process_lazada(
-                ean_df,
-                mp_file.getvalue()
-            )
-
-            st.write(
-                f"✅ Lazada Shop SKUs → {len(ids)}"
-            )
-
-            results[pct] = {
-                "mp": "Lazada",
-                "ids": ids
-            }
-
-        elif marketplace == "Shopee":
-
-            ids = process_shopee(
-                ean_df,
-                mp_file.getvalue()
-            )
-
-            st.write(
-                f"✅ Shopee Product IDs → {len(ids)}"
-            )
-
-            results[pct] = {
-                "mp": "Shopee",
-                "ids": ids
-            }
-
-        elif marketplace == "Zalora":
-
-            ann = process_zalora(
-                ean_df,
-                mp_file.getvalue(),
-                content_df
+                if n_ok == 0:
+                    st.warning(
+                        f"No in-stock eligible EANs — skipping {pct}%"
+                    )
+                    continue
+                    
+                try:
+                    if marketplace == "Lazada":
+                        ids = process_lazada(
+                            ean_df,
+                            mp_file.getvalue()
+                        )
+                        st.write(
+                            f"✅ Lazada Shop SKUs → {len(ids)}"
+                        )
+                        results[pct] = {
+                            "mp": "Lazada",
+                            "ids": ids
+                        }
+                elif marketplace == "Shopee":
+                    ids = process_shopee(
+                        ean_df,
+                        mp_file.getvalue()
+                    )
+                    st.write(
+                        f"✅ Shopee Product IDs → {len(ids)}"
+                    )
+                    results[pct] = {
+                        "mp": "Shopee", 
+                        "ids": ids
+                    }
+            elif marketplace == "Zalora":
+                
+                ann = process_zalora(
+                    ean_df,
+                    mp_file.getvalue(),
+                    content_df
             )
 
             y = (
