@@ -713,7 +713,7 @@ def _run(zecom_file, content_file, inv_file, mp_file,
         st.warning(
             f"No eligible / no-remark articles — skipping {pct}%"
         )
-        continue
+    continue
 
     # ==========================
     # EAN Mapping
