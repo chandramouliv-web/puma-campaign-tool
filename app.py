@@ -203,15 +203,12 @@ def process_zecom(zecom_df, region, marketplace,
 
     # ── Price filter ──────────────────────────────────────────────
     threshold = cfg["threshold"]
-    rrp = pd.to_numeric(df.iloc[:, rrp_idx], errors="coerce").fillna(0)
-    srp = pd.to_numeric(df.iloc[:, srp_idx], errors="coerce").fillna(0)
+    rrp = pd.to_numeric(df.iloc[:, rrp_idx], errors="coerce")
+    srp = pd.to_numeric(df.iloc[:, srp_idx], errors="coerce")
 
-    # Campaign Price Logic
-    campaign_price = srp.copy()
-    campaign_price[(srp <= 0)] = rrp[(srp <= 0)]
-
-    # Eligibility Logic
-    srp_ok = (srp <= 0) | (srp >= threshold)
+    # SRP == 0 → full price (= RRP) → acceptable
+    # SRP  > 0 → must be >= threshold
+    srp_ok  = (srp == 0) | (srp >= threshold)
     price_ok = (rrp > threshold) & srp_ok
 
     # ── Remark classification ─────────────────────────────────────
@@ -225,14 +222,12 @@ def process_zecom(zecom_df, region, marketplace,
             return "no_remark"
         return "eligible" if r in eligible_remarks else "ineligible"
 
-        result = pd.DataFrame({
-        "article": df[cfg["article_col"]].astype(str).str.strip().values,
+    result = pd.DataFrame({
+        "article":  df[cfg["article_col"]].astype(str).str.strip().values,
         "price_ok": price_ok.values,
-       "remark": excl_vals.values,
-         "RRP": rrp.values,
-         "SRP": srp.values,
-        "Campaign Price": campaign_price.values
+        "remark":   excl_vals.values,
     })
+
     result["remark_status"] = result.apply(
         lambda row: "ineligible" if not row["price_ok"]
         else classify(row["remark"]),
@@ -242,9 +237,8 @@ def process_zecom(zecom_df, region, marketplace,
     # Clean up
     result = result[result["article"].str.match(r"^[\w_\-]+$", na=False)]
     result = result[result["article"].str.lower() != "nan"]
-    return result[
-    ["article", "remark_status", "RRP", "SRP", "Campaign Price"]
-    ].drop_duplicates(subset=["article"])
+    return result[["article", "remark_status"]].drop_duplicates(subset=["article"])
+
 
 # ─────────────────────────────────────────────────────────────────
 # EAN MAPPING & SETS
@@ -258,9 +252,8 @@ def map_to_eans(article_status, content_df, inventory_df):
     merged = merged.merge(inventory_df.rename(columns={"Stock": "stock"}),
                           on="EAN", how="left")
     merged["has_stock"] = merged["stock"].fillna(0) > 0
-    return merged[
-    ["article", "EAN", "remark_status", "Campaign Price", "has_stock"]
-    ]
+    return merged[["article", "EAN", "remark_status", "has_stock"]]
+
 def eligible_ean_set(df):
     return set(df[(df["remark_status"] == "eligible") & df["has_stock"]]["EAN"])
 
