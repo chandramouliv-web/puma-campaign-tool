@@ -552,75 +552,73 @@ def main():
 
         # Validation
         missing = []
-
         if not zecom_file:
-        missing.append("ZeCom Tracker")
-    
+            missing.append("ZeCom Tracker")
+        
         if not content_file:
-        missing.append("Content File")
-
+            missing.append("Content File")
+            
         if not inv_file:
-        missing.append("Inventory File")
-
+            missing.append("Inventory File")
+            
         if not mp_file:
-        missing.append(f"{marketplace} Export")
-
+            missing.append(f"{marketplace} Export")
+            
         if not voucher_pcts:
-        missing.append("Voucher %")
+            missing.append("Voucher %")
 
-# Check remarks selected for each voucher %
+        # Check remarks selected for each voucher %
         if voucher_pcts:
-        missing_pct = []
+            missing_pct = []
+            
+            for pct in voucher_pcts:
+                remarks = voucher_remark_map.get(pct, [])
 
-        for pct in voucher_pcts:
-            remarks = voucher_remark_map.get(pct, [])
+                if len(remarks) == 0:
+                    missing_pct.append(f"{pct}%")
 
-        if len(remarks) == 0:
-            missing_pct.append(f"{pct}%")
-
-    if missing_pct:
-        missing.append(
-            "Remarks for " + ", ".join(missing_pct)
-        )
-
-# Display missing items
-if missing:
-    st.info(
-        "Still needed: **" +
-        ", ".join(missing) +
-        "**"
-    )
-
-# Ready flag
-ready = len(missing) == 0
-
-# Debug (remove later)
-with st.expander("Debug Info"):
-    st.write("Voucher PCTs:", voucher_pcts)
-    st.write("Voucher Remark Map:", voucher_remark_map)
-    st.write("Ready:", ready)
+            if missing_pct:
+                missing.append(
+                    "Remarks for " + ", ".join(missing_pct)
+                )
+        # Display missing items
+        
+        if missing:
+            st.info(
+                "Still needed: **" +
+                ", ".join(missing) +
+                "**"
+            )
+        # Ready flag
+        ready = len(missing) == 0
+        # Debug
+        with st.expander("Debug Info"):
+            st.write("Voucher PCTs:", voucher_pcts)
+            st.write("Voucher Remark Map:", voucher_remark_map)
+            st.write("Ready:", ready)
 
 # Generate button
-if st.button(
-    "🚀 Generate Eligible SKU Lists",
-    disabled=not ready,
-    type="primary",
-):
-    _run(
-        zecom_file=zecom_file,
-        content_file=content_file,
-        inv_file=inv_file,
-        mp_file=mp_file,
-        region=region,
-        marketplace=marketplace,
-        excl_idx=excl_idx,
-        rrp_idx=rrp_idx,
-        srp_idx=srp_idx,
-        voucher_remark_map=voucher_remark_map,
-        include_no_remark=include_no_remark,
-        voucher_pcts=voucher_pcts,
-        voucher_type=voucher_type,
-    )
+        if st.button(
+            "🚀 Generate Eligible SKU Lists",
+            disabled=not ready,
+            type="primary",
+        ):
+            
+            _run(
+                zecom_file=zecom_file,
+                content_file=content_file,
+                inv_file=inv_file,
+                mp_file=mp_file,
+                region=region,
+                marketplace=marketplace,
+                excl_idx=excl_idx,
+                rrp_idx=rrp_idx,
+                srp_idx=srp_idx,
+                voucher_remark_map=voucher_remark_map,
+                include_no_remark=include_no_remark,
+                voucher_pcts=voucher_pcts,
+                voucher_type=voucher_type,
+            )
 # ─────────────────────────────────────────────────────────────────
 # PROCESSING PIPELINE
 # ─────────────────────────────────────────────────────────────────
@@ -716,11 +714,25 @@ def _run(zecom_file, content_file, inv_file, mp_file,
                     f"No eligible / no-remark articles — skipping {pct}%"
                 )
                 continue
-                ean_df = map_to_eans(
-                    art,
-                    content_df,
-                    inv_df
+            
+            ean_df = map_to_eans(
+                art,
+                content_df,
+                inv_df
+            )
+            
+            n_ok = len(
+                eligible_ean_set(ean_df)
+            )
+            
+            st.write(
+                f"EANs in stock & eligible: {n_ok:,}"
+            )
+            if n_ok == 0:
+                st.warning(
+                    f"No in-stock eligible EANs — skipping {pct}%"
                 )
+                continue
                 n_ok = len(
                     eligible_ean_set(ean_df)
                 )
