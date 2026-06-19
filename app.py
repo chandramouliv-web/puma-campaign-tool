@@ -849,26 +849,26 @@ else:
         state="error"
     )
 
-    return
+return
 
 # ── ⑤ DOWNLOAD ───────────────────────────────────────────────
-    st.markdown("---")
-    st.write("Results Generated:")
-    st.write(list(results.keys()))
-    st.subheader("⑤ Download Results")
-    today    = pd.Timestamp.now().strftime("%Y%m%d")
-    vt_short = "Bundle" if vtype == "bundle" else "VC"
+st.markdown("---")
+st.write("Results Generated:")
+st.write(list(results.keys()))
+st.subheader("⑤ Download Results")
+today    = pd.Timestamp.now().strftime("%Y%m%d")
+vt_short = "Bundle" if vtype == "bundle" else "VC"
 
-    for pct, res in results.items():
-        mp    = res["mp"]
-        fname = f"{mp}_{region}_{pct}pct_{vt_short}_{today}.xlsx"
-        cm, cd = st.columns([3, 2])
-        with cm:
-            if mp == "Zalora":
-                st.metric(f"{mp} — {pct}% {vt_short}", f"{res['yes_count']} eligible SKUs")
-            else:
-                label = "Shop SKUs" if mp == "Lazada" else "Product IDs"
-                st.metric(f"{mp} — {pct}% {vt_short}", f"{len(res['ids'])} {label}")
+for pct, res in results.items():
+    mp    = res["mp"]
+    fname = f"{mp}_{region}_{pct}pct_{vt_short}_{today}.xlsx"
+    cm, cd = st.columns([3, 2])
+    with cm:
+        if mp == "Zalora":
+            st.metric(f"{mp} — {pct}% {vt_short}", f"{res['yes_count']} eligible SKUs")
+        else:
+            label = "Shop SKUs" if mp == "Lazada" else "Product IDs"
+            st.metric(f"{mp} — {pct}% {vt_short}", f"{len(res['ids'])} {label}")
         with cd:
             if mp == "Lazada":               data = make_lazada_output(res["ids"])
             elif mp in ("Shopee", "TikTok"): data = make_shopee_output(res["ids"])
