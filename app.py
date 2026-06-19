@@ -676,12 +676,12 @@ def _run(zecom_file, content_file, inv_file, mp_file,
         st.write(voucher_remark_map)
 
         for pct in voucher_pcts:
-            
-            st.markdown(f"### 🎟 Processing {pct}% Voucher")
-        
-        eligible_remarks = set(
-            voucher_remark_map.get(pct, [])
-        )
+
+    st.markdown(f"### 🎟 Processing {pct}% Voucher")
+
+    eligible_remarks = set(
+        voucher_remark_map.get(pct, [])
+    )
 
     st.write(
         f"⚙️ {pct}% Voucher using "
@@ -713,8 +713,27 @@ def _run(zecom_file, content_file, inv_file, mp_file,
         st.warning(
             f"No eligible / no-remark articles — skipping {pct}%"
         )
-    continue
+        continue
 
+    ean_df = map_to_eans(
+        art,
+        content_df,
+        inv_df
+    )
+
+    n_ok = len(
+        eligible_ean_set(ean_df)
+    )
+
+    st.write(
+        f"EANs in stock & eligible: {n_ok:,}"
+    )
+
+    if n_ok == 0:
+        st.warning(
+            f"No in-stock eligible EANs — skipping {pct}%"
+        )
+        continue
     # ==========================
     # EAN Mapping
     # ==========================
