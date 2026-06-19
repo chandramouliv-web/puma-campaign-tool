@@ -474,7 +474,7 @@ def main():
 
         # ── ③c REMARK SELECTION ──────────────────────────────
         st.markdown("---")
-st.subheader("③c Select Eligible Remarks")
+        st.subheader("③c Select Eligible Remarks")
 
 unique_remarks = get_unique_remarks(zecom_df, excl_idx)
 
@@ -523,10 +523,8 @@ else:
             key=f"multi_{pct}"
         )
 
-        st.session_state[state_key] = selected
-
-              voucher_remark_map[pct] = set(selected)
-
+         st.session_state[state_key] = selected
+        voucher_remark_map[pct] = set(selected)
         st.success(
             f"{len(selected)} remarks selected for {pct}%"
         )
@@ -549,7 +547,6 @@ else:
     if not mp_file:      missing.append(f"{marketplace} Export")
     if not voucher_pcts: missing.append("Voucher %")
     if zecom_file and voucher_pcts:
-
     missing_pct = []
 
     for pct in voucher_pcts:
@@ -566,23 +563,22 @@ else:
 
     ready = not missing
 
-    if st.button("🚀 Generate Eligible SKU Lists", disabled=not ready, type="primary"):
+        if st.button("🚀 Generate Eligible SKU Lists", disabled=not ready, type="primary"):
         _run(
-    zecom_file,
-    content_file,
-    inv_file,
-    mp_file,
-    region,
-    marketplace,
-    excl_idx,
-    rrp_idx,
-    srp_idx,
-    voucher_remark_map,
-    include_no_remark,
-    voucher_pcts,
-    voucher_type,
-)
-
+            zecom_file,
+            content_file,
+            inv_file,
+            mp_file,
+            region,
+            marketplace,
+            excl_idx,
+            rrp_idx,
+            srp_idx,
+            voucher_remark_map,
+            include_no_remark,
+            voucher_pcts,
+            voucher_type,
+        )
 
 # ─────────────────────────────────────────────────────────────────
 # PROCESSING PIPELINE
@@ -643,28 +639,27 @@ def _run(
             status.update(label="❌ Error", state="error"); return
 
         # 4. Process each voucher %
-        results = {}
+                results = {}
+
         for pct in voucher_pcts:
-            st.write(f"⚙️  **{pct}% {voucher_type}** — "
-                     f"using {len(eligible_remarks)} selected remark(s)…")
 
-            for pct in voucher_pcts:
+            eligible_remarks = voucher_remark_map.get(pct, set())
 
-    eligible_remarks = voucher_remark_map.get(
-        pct,
-        set()
-    )
+            st.write(
+                f"⚙️ **{pct}% {voucher_type}** — "
+                f"using {len(eligible_remarks)} selected remark(s)…"
+            )
 
-    art = process_zecom(
-        zecom_df,
-        region,
-        marketplace,
-        excl_idx,
-        rrp_idx,
-        srp_idx,
-        eligible_remarks,
-        include_no_remark,
-    )
+            art = process_zecom(
+                zecom_df,
+                region,
+                marketplace,
+                excl_idx,
+                rrp_idx,
+                srp_idx,
+                eligible_remarks,
+                include_no_remark,
+            )
             n_elig  = (art["remark_status"] == "eligible").sum()
             n_nr    = (art["remark_status"] == "no_remark").sum()
             n_ineli = (art["remark_status"] == "ineligible").sum()
