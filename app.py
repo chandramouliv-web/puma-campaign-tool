@@ -475,24 +475,20 @@ def main():
         # ── ③c REMARK SELECTION ───────────────────────────────────
         st.markdown("---")
         st.subheader("③c Select Eligible Remarks by Voucher %")
-        
         unique_remarks = get_unique_remarks(zecom_df, excl_idx)
-        
-        if "voucher_remark_map" not in st.session_state:
-            st.session_state.voucher_remark_map = {}
+        voucher_remark_map = {}
         if voucher_pcts:
             for pct in voucher_pcts:
                 st.markdown(f"### 🎟 {pct}% Voucher")
-                
-                key_name = f"remarks_{pct}"
-                
-                selected = st.multiselect(
+                voucher_remark_map[pct] = st.multiselect(
                     f"Select remarks for {pct}% Voucher",
                     options=unique_remarks,
-                    key=key_name
+                    default=[],
+                    key=f"voucher_{pct}"
                 )
-                
-                st.session_state.voucher_remark_map[pct] = selected
+                st.caption(
+                    f"{len(voucher_remark_map[pct])} remark(s) selected"
+                )
         else:
             st.warning("Enter Voucher % first.")
             
@@ -555,26 +551,36 @@ def main():
     st.subheader("④ Generate")
 
     missing = []
-    if not zecom_file:   missing.append("ZeCom Tracker")
-    if not content_file: missing.append("Content File")
-    if not inv_file:     missing.append("Inventory File")
-    if not mp_file:      missing.append(f"{marketplace} Export")
-    if not voucher_pcts: missing.append("Voucher %")
+    if not zecom_file:
+        missing.append("ZeCom Tracker")
+    
+    if not content_file:
+        missing.append("Content File")
+        
+    if not inv_file:
+        missing.append("Inventory File")
+        
+    if not mp_file:
+        missing.append(f"{marketplace} Export")
+    
+    if not voucher_pcts:
+        missing.append("Voucher %")
+        
     if zecom_file and voucher_pcts:
         missing_pct = []
+        
         for pct in voucher_pcts:
-            if len(st.session_state.voucher_remark_map.get(pct, [])) == 0:
+            if len(voucher_remark_map.get(pct, [])) == 0:
                 missing_pct.append(f"{pct}%")
                 
-            if missing_pct:
-                missing.append(
-                    "Remarks for " + ", ".join(missing_pct)
-                )
-
+        if missing_pct:
+            missing.append(
+                "Remarks for " + ", ".join(missing_pct)
+            )
+            
     if missing:
         st.info(f"Still needed: **{', '.join(missing)}**")
-
-    ready = not missing
+        ready = not missing
 
     if st.button("🚀 Generate Eligible SKU Lists", disabled=not ready, type="primary"):
         _run(
@@ -637,12 +643,20 @@ def _run(zecom_file, content_file, inv_file, mp_file,
 
         # 4. Process each voucher %
         results = {}
+        
+        st.write("Voucher PCTs:", voucher_pcts)
         st.write("Voucher Remark Map:")
         st.write(voucher_remark_map)
         
         for pct in voucher_pcts:
+            
+            st.markdown(f"### 🎟 Processing {pct}% Voucher")
             eligible_remarks = set(
                 voucher_remark_map.get(pct, [])
+            )
+            st.write(
+                f"Selected Remarks ({pct}%):",
+                list(eligible_remarks)
             )
             st.write(
                 f"⚙️ {pct}% Voucher using "
@@ -661,45 +675,141 @@ def _run(zecom_file, content_file, inv_file, mp_file,
             n_elig  = (art["remark_status"] == "eligible").sum()
             n_nr    = (art["remark_status"] == "no_remark").sum()
             n_ineli = (art["remark_status"] == "ineligible").sum()
-            st.write(f"   ZeCom: {n_elig} eligible | {n_nr} no-remark | {n_ineli} ineligible")
-
+            
+            st.write(
+                f"ZeCom: {n_elig} eligible | "
+                f"{n_nr} no-remark | "
+                f"{n_ineli} ineligible"
+            )
+            
             if n_elig + n_nr == 0:
-                st.warning(f"   No eligible / no-remark articles — skipping {pct}%.")
+                st.warning(
+                    f"No eligible / no-remark articles — skipping {pct}%"
+                )
                 continue
+                ean_df = map_to_eans(
+                    art,
+                    content_df,
+                    inv_df
+                )
+                n_ok = len(
+                    eligible_ean_set(ean_df)
+                )
+                st.write(
+                    f"EANs in stock & eligible: {n_ok:,}"
+                )
 
-            ean_df = map_to_eans(art, content_df, inv_df)
-            n_ok   = len(eligible_ean_set(ean_df))
-            st.write(f"   EANs in stock & eligible: {n_ok:,}")
-            if n_ok == 0:
-                st.warning(f"   No in-stock eligible EANs — skipping {pct}%.")
-                continue
+    if n_ok == 0:
+        st.warning(
+            f"No in-stock eligible EANs — skipping {pct}%"
+        )
+        continue
 
-            try:
-                if marketplace == "Lazada":
-                    ids = process_lazada(ean_df, mp_file.getvalue())
-                    st.write(f"   ✅ Lazada Shop SKUs → **{len(ids)}**")
-                    results[pct] = {"mp": "Lazada", "ids": ids}
-                elif marketplace == "Shopee":
-                    ids = process_shopee(ean_df, mp_file.getvalue())
-                    st.write(f"   ✅ Shopee Product IDs → **{len(ids)}**")
-                    results[pct] = {"mp": "Shopee", "ids": ids}
-                elif marketplace == "Zalora":
-                    ann = process_zalora(ean_df, mp_file.getvalue(), content_df)
-                    y  = (ann["Voucher Eligible"] == "Yes").sum()
-                    nr = (ann["Voucher Eligible"] == "No Remark").sum()
-                    st.write(f"   ✅ Zalora: {y} eligible | {nr} no-remark")
-                    results[pct] = {"mp": "Zalora", "ann": ann, "yes_count": y}
-                elif marketplace == "TikTok":
-                    ids = process_tiktok(ean_df, mp_file.getvalue())
-                    st.write(f"   ✅ TikTok Product IDs → **{len(ids)}**")
-                    results[pct] = {"mp": "TikTok", "ids": ids}
-            except Exception as e:
-                st.error(f"   Error processing {marketplace}: {e}")
+    try:
 
-        if results:
-            status.update(label="✅ Done!", state="complete")
-        else:
-            status.update(label="⚠️ No results generated", state="error"); return
+        if marketplace == "Lazada":
+
+            ids = process_lazada(
+                ean_df,
+                mp_file.getvalue()
+            )
+
+            st.write(
+                f"✅ Lazada Shop SKUs → {len(ids)}"
+            )
+
+            results[pct] = {
+                "mp": "Lazada",
+                "ids": ids
+            }
+
+        elif marketplace == "Shopee":
+
+            ids = process_shopee(
+                ean_df,
+                mp_file.getvalue()
+            )
+
+            st.write(
+                f"✅ Shopee Product IDs → {len(ids)}"
+            )
+
+            results[pct] = {
+                "mp": "Shopee",
+                "ids": ids
+            }
+
+        elif marketplace == "Zalora":
+
+            ann = process_zalora(
+                ean_df,
+                mp_file.getvalue(),
+                content_df
+            )
+
+            y = (
+                ann["Voucher Eligible"] == "Yes"
+            ).sum()
+
+            nr = (
+                ann["Voucher Eligible"] == "No Remark"
+            ).sum()
+
+            st.write(
+                f"✅ Zalora: {y} eligible | {nr} no-remark"
+            )
+
+            results[pct] = {
+                "mp": "Zalora",
+                "ann": ann,
+                "yes_count": y
+            }
+
+        elif marketplace == "TikTok":
+
+            ids = process_tiktok(
+                ean_df,
+                mp_file.getvalue()
+            )
+
+            st.write(
+                f"✅ TikTok Product IDs → {len(ids)}"
+            )
+
+            results[pct] = {
+                "mp": "TikTok",
+                "ids": ids
+            }
+
+        st.success(
+            f"Added {pct}% to results"
+        )
+
+        st.write(
+            "Current Results Keys:",
+            list(results.keys())
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Error processing {pct}%: {e}"
+        )
+
+st.write("Final Results Keys:")
+st.write(list(results.keys()))
+
+if results:
+    status.update(
+        label="✅ Done!",
+        state="complete"
+    )
+else:
+    status.update(
+        label="⚠️ No results generated",
+        state="error"
+    )
+    return
 
     # ── ⑤ DOWNLOAD ───────────────────────────────────────────────
     st.markdown("---")
