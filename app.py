@@ -669,20 +669,19 @@ def _run(zecom_file, content_file, inv_file, mp_file,
             status.update(label="❌ Error", state="error"); return
 
         # 4. Process each voucher %
-        # 4. Process each voucher %
-results = {}
+        results = {}
 
-st.write("Voucher PCTs:", voucher_pcts)
-st.write("Voucher Remark Map:")
-st.write(voucher_remark_map)
+        st.write("Voucher PCTs:", voucher_pcts)
+        st.write("Voucher Remark Map:")
+        st.write(voucher_remark_map)
 
-for pct in voucher_pcts:
-
-    st.markdown(f"### 🎟 Processing {pct}% Voucher")
-
-    eligible_remarks = set(
-        voucher_remark_map.get(pct, [])
-    )
+        for pct in voucher_pcts:
+            
+            st.markdown(f"### 🎟 Processing {pct}% Voucher")
+        
+        eligible_remarks = set(
+            voucher_remark_map.get(pct, [])
+        )
 
     st.write(
         f"⚙️ {pct}% Voucher using "
@@ -828,28 +827,28 @@ for pct in voucher_pcts:
             f"Error processing {pct}%: {e}"
         )
 
-# ==========================================
-# AFTER LOOP FINISHES
-# ==========================================
+        # ==========================================
+        # AFTER LOOP FINISHES
+        # ==========================================
 
-st.write("Final Results Keys:")
-st.write(list(results.keys()))
+        st.write("Final Results Keys:")
+        st.write(list(results.keys()))
 
-if results:
+        if results:
 
-    status.update(
-        label="✅ Done!",
-        state="complete"
-    )
+            status.update(
+                label="✅ Done!",
+                state="complete"
+            )
 
-else:
+        else:
 
-    status.update(
-        label="⚠️ No results generated",
-        state="error"
-    )
+            status.update(
+                label="⚠️ No results generated",
+                state="error"
+            )
 
-return
+        return
 
 # ── ⑤ DOWNLOAD ───────────────────────────────────────────────
 st.markdown("---")
