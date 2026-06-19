@@ -580,14 +580,20 @@ def main():
             
     if missing:
         st.info(f"Still needed: **{', '.join(missing)}**")
-        ready = not missing
+        
+        ready = len(missing) == 0
+
+        # Debug
+        st.write("Voucher PCTs:", voucher_pcts)
+        st.write("Voucher Remark Map:", voucher_remark_map)
+        st.write("Ready:", ready)
 
     if st.button("🚀 Generate Eligible SKU Lists", disabled=not ready, type="primary"):
         _run(
             zecom_file, content_file, inv_file, mp_file,
             region, marketplace,
             excl_idx, rrp_idx, srp_idx,
-            st.session_state.voucher_remark_map, include_no_remark,
+            voucher_remark_map, include_no_remark,
             voucher_pcts, voucher_type,
         )
 
