@@ -30,3 +30,27 @@ with col2:
 st.success(
     f"{region} | {marketplace}"
 )
+
+st.markdown("---")
+
+st.subheader("📂 Upload Files")
+
+zecom_file = st.file_uploader(
+    "ZeCom Tracker",
+    type=["xlsx"]
+)
+
+content_file = st.file_uploader(
+    "Content File",
+    type=["xlsx"]
+)
+
+inventory_file = st.file_uploader(
+    "Inventory File",
+    type=["xlsx","csv"]
+)
+
+marketplace_file = st.file_uploader(
+    "Marketplace Export",
+    type=["xlsx","zip"]
+)
