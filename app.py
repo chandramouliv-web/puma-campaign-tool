@@ -547,57 +547,81 @@ def main():
             )
 
     # ── ④ GENERATE ───────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("④ Generate")
+    # ── ④ GENERATE ───────────────────────────────────────────────
+st.markdown("---")
+st.subheader("④ Generate")
 
-    missing = []
-    if not zecom_file:
-        missing.append("ZeCom Tracker")
-    
-    if not content_file:
-        missing.append("Content File")
-        
-    if not inv_file:
-        missing.append("Inventory File")
-        
-    if not mp_file:
-        missing.append(f"{marketplace} Export")
-    
-    if not voucher_pcts:
-        missing.append("Voucher %")
-        
-    if zecom_file and voucher_pcts:
-        missing_pct = []
-        
-        for pct in voucher_pcts:
-            if len(voucher_remark_map.get(pct, [])) == 0:
-                missing_pct.append(f"{pct}%")
-                
-        if missing_pct:
-            missing.append(
-                "Remarks for " + ", ".join(missing_pct)
-            )
-            
-    if missing:
-        st.info(f"Still needed: **{', '.join(missing)}**")
-        
-        ready = len(missing) == 0
+# Validation
+missing = []
 
-        # Debug
-        st.write("Voucher PCTs:", voucher_pcts)
-        st.write("Voucher Remark Map:", voucher_remark_map)
-        st.write("Ready:", ready)
+if not zecom_file:
+    missing.append("ZeCom Tracker")
 
-    if st.button("🚀 Generate Eligible SKU Lists", disabled=not ready, type="primary"):
-        _run(
-            zecom_file, content_file, inv_file, mp_file,
-            region, marketplace,
-            excl_idx, rrp_idx, srp_idx,
-            voucher_remark_map, include_no_remark,
-            voucher_pcts, voucher_type,
+if not content_file:
+    missing.append("Content File")
+
+if not inv_file:
+    missing.append("Inventory File")
+
+if not mp_file:
+    missing.append(f"{marketplace} Export")
+
+if not voucher_pcts:
+    missing.append("Voucher %")
+
+# Check remarks selected for each voucher %
+if voucher_pcts:
+    missing_pct = []
+
+    for pct in voucher_pcts:
+        remarks = voucher_remark_map.get(pct, [])
+
+        if len(remarks) == 0:
+            missing_pct.append(f"{pct}%")
+
+    if missing_pct:
+        missing.append(
+            "Remarks for " + ", ".join(missing_pct)
         )
 
+# Display missing items
+if missing:
+    st.info(
+        "Still needed: **" +
+        ", ".join(missing) +
+        "**"
+    )
 
+# Ready flag
+ready = len(missing) == 0
+
+# Debug (remove later)
+with st.expander("Debug Info"):
+    st.write("Voucher PCTs:", voucher_pcts)
+    st.write("Voucher Remark Map:", voucher_remark_map)
+    st.write("Ready:", ready)
+
+# Generate button
+if st.button(
+    "🚀 Generate Eligible SKU Lists",
+    disabled=not ready,
+    type="primary",
+):
+    _run(
+        zecom_file=zecom_file,
+        content_file=content_file,
+        inv_file=inv_file,
+        mp_file=mp_file,
+        region=region,
+        marketplace=marketplace,
+        excl_idx=excl_idx,
+        rrp_idx=rrp_idx,
+        srp_idx=srp_idx,
+        voucher_remark_map=voucher_remark_map,
+        include_no_remark=include_no_remark,
+        voucher_pcts=voucher_pcts,
+        voucher_type=voucher_type,
+    )
 # ─────────────────────────────────────────────────────────────────
 # PROCESSING PIPELINE
 # ─────────────────────────────────────────────────────────────────
