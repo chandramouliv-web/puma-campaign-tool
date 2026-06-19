@@ -717,74 +717,65 @@ def _run(zecom_file, content_file, inv_file, mp_file,
                             "mp": "Lazada",
                             "ids": ids
                         }
-                elif marketplace == "Shopee":
-                    ids = process_shopee(
+                    
+                    elif marketplace == "Shopee":
+                        ids = process_shopee(
                         ean_df,
                         mp_file.getvalue()
+                        )
+                        st.write(
+                            f"✅ Shopee Product IDs → {len(ids)}"
+                        )
+                        results[pct] = {
+                            "mp": "Shopee", 
+                            "ids": ids
+                        }
+                    elif marketplace == "Zalora":
+                        ann = process_zalora(
+                            ean_df,
+                            mp_file.getvalue(),
+                            content_df
+                        )
+                        y = (
+                            ann["Voucher Eligible"] == "Yes"
+                        ).sum()
+                        
+                        nr = (
+                            ann["Voucher Eligible"] == "No Remark"
+                        ).sum()
+                        st.write(
+                            f"✅ Zalora: {y} eligible | {nr} no-remark"
+                        )
+                        results[pct] = {
+                            "mp": "Zalora",
+                            "ann": ann,
+                            "yes_count": y
+                        }
+                    elif marketplace == "TikTok":
+                        ids = process_tiktok(
+                            ean_df,
+                            mp_file.getvalue()
+                        )
+                        st.write(
+                            f"✅ TikTok Product IDs → {len(ids)}"
+                        )
+                        results[pct] = {
+                            "mp": "TikTok",
+                            "ids": ids
+                        }
+                    
+                    st.success(
+                        f"Added {pct}% to results"
                     )
+                    
                     st.write(
-                        f"✅ Shopee Product IDs → {len(ids)}"
+                        "Current Results Keys:",
+                        list(results.keys())
                     )
-                    results[pct] = {
-                        "mp": "Shopee", 
-                        "ids": ids
-                    }
-            elif marketplace == "Zalora":
-                
-                ann = process_zalora(
-                    ean_df,
-                    mp_file.getvalue(),
-                    content_df
-            )
-
-            y = (
-                ann["Voucher Eligible"] == "Yes"
-            ).sum()
-
-            nr = (
-                ann["Voucher Eligible"] == "No Remark"
-            ).sum()
-
-            st.write(
-                f"✅ Zalora: {y} eligible | {nr} no-remark"
-            )
-
-            results[pct] = {
-                "mp": "Zalora",
-                "ann": ann,
-                "yes_count": y
-            }
-
-        elif marketplace == "TikTok":
-
-            ids = process_tiktok(
-                ean_df,
-                mp_file.getvalue()
-            )
-
-            st.write(
-                f"✅ TikTok Product IDs → {len(ids)}"
-            )
-
-            results[pct] = {
-                "mp": "TikTok",
-                "ids": ids
-            }
-
-        st.success(
-            f"Added {pct}% to results"
-        )
-
-        st.write(
-            "Current Results Keys:",
-            list(results.keys())
-        )
-
-    except Exception as e:
-
-        st.error(
-            f"Error processing {pct}%: {e}"
-        )
+                except Exception as e:
+                    st.error(
+                        f"Error processing {pct}%: {e}"
+                    )
 
 st.write("Final Results Keys:")
 st.write(list(results.keys()))
