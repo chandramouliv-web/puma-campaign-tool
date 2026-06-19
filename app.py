@@ -525,21 +525,19 @@ else:
 
         st.session_state[state_key] = selected
 
-        voucher_remark_map[pct] = set(selected)
+              voucher_remark_map[pct] = set(selected)
 
         st.success(
             f"{len(selected)} remarks selected for {pct}%"
         )
-            # No-remark checkbox
-            st.markdown("&nbsp;")
-            include_no_remark = st.checkbox(
-                "Include articles with **blank / no remark** "
-                "(they will be flagged as *No Remark* in the Zalora output, "
-                "and will NOT cause PID-level exclusion on Shopee / TikTok)",
-                value=False,
-                key="incl_nr",
-            )
 
+    st.markdown("&nbsp;")
+    include_no_remark = st.checkbox(
+        "Include articles with blank / no remark "
+        "(they will be flagged as No Remark in Zalora output)",
+        value=False,
+        key="incl_nr",
+    )
     # ── ④ GENERATE ───────────────────────────────────────────────
     st.markdown("---")
     st.subheader("④ Generate")
