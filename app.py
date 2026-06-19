@@ -776,21 +776,21 @@ def _run(zecom_file, content_file, inv_file, mp_file,
                     st.error(
                         f"Error processing {pct}%: {e}"
                     )
-
-st.write("Final Results Keys:")
-st.write(list(results.keys()))
-
-if results:
-    status.update(
-        label="✅ Done!",
-        state="complete"
-    )
-else:
-    status.update(
-        label="⚠️ No results generated",
-        state="error"
-    )
-    return
+            
+            st.write("Final Results Keys:")
+            st.write(list(results.keys()))
+            
+            if results:
+                status.update(
+                    label="✅ Done!",
+                    state="complete"
+                )
+            else:
+                status.update(
+                    label="⚠️ No results generated",
+                    state="error"
+                )
+                return
 
     # ── ⑤ DOWNLOAD ───────────────────────────────────────────────
     st.markdown("---")
