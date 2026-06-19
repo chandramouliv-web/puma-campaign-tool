@@ -490,8 +490,7 @@ def main():
             state_key = f"remarks_{pct}"
             if state_key not in st.session_state:
             st.session_state[state_key] = []
-
-        c1, c2 = st.columns(2)
+            c1, c2 = st.columns(2)
 
         with c1:
             if st.button(
