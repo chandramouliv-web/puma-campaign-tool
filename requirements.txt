@@ -5,3 +5,4 @@ openpyxl
 xlsxwriter
 pyxlsb
 python-dateutil
+python-calamine
