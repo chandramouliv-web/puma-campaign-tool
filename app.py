@@ -849,7 +849,7 @@ else:
         state="error"
     )
 
-    return
+return
 
     # ── ⑤ DOWNLOAD ───────────────────────────────────────────────
     st.markdown("---")
