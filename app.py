@@ -477,17 +477,22 @@ def main():
         st.subheader("③c Select Eligible Remarks by Voucher %")
         
         unique_remarks = get_unique_remarks(zecom_df, excl_idx)
-        voucher_remark_map = {}
+        
+        if "voucher_remark_map" not in st.session_state:
+            st.session_state.voucher_remark_map = {}
         if voucher_pcts:
             for pct in voucher_pcts:
                 st.markdown(f"### 🎟 {pct}% Voucher")
+                
                 key_name = f"remarks_{pct}"
-                voucher_remark_map[pct] = st.multiselect(
+                
+                selected = st.multiselect(
                     f"Select remarks for {pct}% Voucher",
                     options=unique_remarks,
-                    default=st.session_state.get(key_name, []),
                     key=key_name
                 )
+                
+                st.session_state.voucher_remark_map[pct] = selected
         else:
             st.warning("Enter Voucher % first.")
             
@@ -558,7 +563,7 @@ def main():
     if zecom_file and voucher_pcts:
         missing_pct = []
         for pct in voucher_pcts:
-            if len(voucher_remark_map.get(pct, [])) == 0:
+            if len(st.session_state.voucher_remark_map.get(pct, [])) == 0:
                 missing_pct.append(f"{pct}%")
                 
             if missing_pct:
@@ -576,7 +581,7 @@ def main():
             zecom_file, content_file, inv_file, mp_file,
             region, marketplace,
             excl_idx, rrp_idx, srp_idx,
-            voucher_remark_map, include_no_remark,
+            st.session_state.voucher_remark_map, include_no_remark,
             voucher_pcts, voucher_type,
         )
 
@@ -632,6 +637,9 @@ def _run(zecom_file, content_file, inv_file, mp_file,
 
         # 4. Process each voucher %
         results = {}
+        st.write("Voucher Remark Map:")
+        st.write(voucher_remark_map)
+        
         for pct in voucher_pcts:
             eligible_remarks = set(
                 voucher_remark_map.get(pct, [])
@@ -695,6 +703,8 @@ def _run(zecom_file, content_file, inv_file, mp_file,
 
     # ── ⑤ DOWNLOAD ───────────────────────────────────────────────
     st.markdown("---")
+    st.write("Results Generated:")
+    st.write(list(results.keys()))
     st.subheader("⑤ Download Results")
     today    = pd.Timestamp.now().strftime("%Y%m%d")
     vt_short = "Bundle" if vtype == "bundle" else "VC"
