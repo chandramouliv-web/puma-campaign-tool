@@ -649,60 +649,65 @@ def main():
             st.markdown(f"**Voucher {position}**")
             rcol1, rcol2, rcol3, rcol4 = st.columns([1, 1.5, 3, 0.6])
 
-            with rcol1:
-                pct_key = f"vc_pct_{rid}"
-                pct_raw = st.text_input("Voucher %", value=st.session_state.get(pct_key, "10"),
-                                        key=pct_key, placeholder="10")
-                pct_clean = pct_raw.strip().replace("%", "")
-                pct_val = int(pct_clean) if pct_clean.isdigit() else None
-                if pct_raw and pct_val is None:
-                    st.error("Whole number only, e.g. 10")
-            with rcol2:
-                st.markdown("**Eligible Remarks**")
-                    "Voucher Type",
-                    ["Regular VC", "Bundle Discount"],
-                    key=f"vc_type_{rid}"
-                )
-            with rcol3:
-                st.markdown("**Eligible Remarks**")
-                selected = []
-                include_nr = False
-                if not unique_remarks:
-                    st.warning("No remarks found in the selected exclusion column.")
-                else:
-                    qc1, qc2, _ = st.columns([1, 1, 3])
-                    with qc1:
-                        if st.button("✅ Select All", key=f"vc_sa_{rid}"):
-                            st.session_state[f"vc_remarks_{rid}"] = unique_remarks[:]
-                    with qc2:
-                        if st.button("❌ Clear All", key=f"vc_ca_{rid}"):
-                            st.session_state[f"vc_remarks_{rid}"] = []
+with rcol1:
+    pct_key = f"vc_pct_{rid}"
+    pct_raw = st.text_input(
+        "Voucher %",
+        value=st.session_state.get(pct_key, "10"),
+        key=pct_key,
+        placeholder="10"
+    )
+    pct_clean = pct_raw.strip().replace("%", "")
+    pct_val = int(pct_clean) if pct_clean.isdigit() else None
 
-                    selected = st.multiselect(
-                        "remarks", options=unique_remarks, default=[],
-                        key=f"vc_remarks_{rid}", label_visibility="collapsed",
-                        help="Only articles whose remark is selected here will be eligible for this voucher.",
-                    )
-                    include_nr = st.checkbox("Include blank/no-remark articles as eligible",
-                                             value=False, key=f"vc_nr_{rid}")
+with rcol2:
+    voucher_type = st.selectbox(
+        "Voucher Type",
+        ["Regular VC", "Bundle Discount"],
+        key=f"vc_type_{rid}"
+    )
 
-                    eligible_set = set(selected)
-                    if eligible_set or include_nr:
-                        df_prev = zecom_df
-                        if mp_col_for_preview and mp_col_for_preview in zecom_df.columns:
-                            df_prev = zecom_df[zecom_df[mp_col_for_preview].astype(str)
-                                               .str.strip().str.upper() == "YES"]
-                        n_match = df_prev.iloc[:, excl_idx].astype(str).str.strip().isin(eligible_set).sum()
-                        st.caption(f"📊 {n_match:,} articles with {marketplace}=YES match "
-                                  f"(before price/stock filter).")
-                    else:
-                        st.caption("⚠️ No remarks selected and no-remark inclusion is off.")
+with rcol3:
+    st.markdown("**Eligible Remarks**")
 
-            with rcol4:
-                st.markdown("&nbsp;")
-                remove_clicked = False
-                if len(st.session_state.voucher_row_ids) > 1:
-                    remove_clicked = st.button("🗑️", key=f"vc_rm_{rid}", help="Remove this voucher")
+    selected = []
+    include_nr = False
+
+    if not unique_remarks:
+        st.warning("No remarks found in the selected exclusion column.")
+    else:
+        qc1, qc2, _ = st.columns([1, 1, 3])
+
+        with qc1:
+            if st.button("✅ Select All", key=f"vc_sa_{rid}"):
+                st.session_state[f"vc_remarks_{rid}"] = unique_remarks[:]
+
+        with qc2:
+            if st.button("❌ Clear All", key=f"vc_ca_{rid}"):
+                st.session_state[f"vc_remarks_{rid}"] = []
+
+        selected = st.multiselect(
+            "remarks",
+            options=unique_remarks,
+            default=[],
+            key=f"vc_remarks_{rid}",
+            label_visibility="collapsed"
+        )
+
+        include_nr = st.checkbox(
+            "Include blank/no-remark articles as eligible",
+            value=False,
+            key=f"vc_nr_{rid}"
+        )
+
+with rcol4:
+    remove_clicked = False
+    if len(st.session_state.voucher_row_ids) > 1:
+        remove_clicked = st.button(
+            "🗑️",
+            key=f"vc_rm_{rid}",
+            help="Remove this voucher"
+        )
 
             return {"rid": rid, "pct": pct_val, "voucher_type": voucher_type, "remarks": set(selected),
                    "include_no_remark": include_nr, "remove": remove_clicked}
