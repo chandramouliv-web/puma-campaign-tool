@@ -647,7 +647,7 @@ def main():
 
         def _render_voucher_row(rid, position):
             st.markdown(f"**Voucher {position}**")
-            rcol1, rcol2, rcol3 = st.columns([1, 1.5, 3, 0.6])
+            rcol1, rcol2, rcol3, rcol4 = st.columns([1, 1.5, 3, 0.6])
 
             with rcol1:
                 pct_key = f"vc_pct_{rid}"
@@ -658,12 +658,12 @@ def main():
                 if pct_raw and pct_val is None:
                     st.error("Whole number only, e.g. 10")
             with rcol2:
-                voucher_type = st.selectbox(
+                st.markdown("**Eligible Remarks**")
                     "Voucher Type",
                     ["Regular VC", "Bundle Discount"],
                     key=f"vc_type_{rid}"
                 )
-            with rcol2:
+            with rcol3:
                 st.markdown("**Eligible Remarks**")
                 selected = []
                 include_nr = False
@@ -698,7 +698,7 @@ def main():
                     else:
                         st.caption("⚠️ No remarks selected and no-remark inclusion is off.")
 
-            with rcol3:
+            with rcol4:
                 st.markdown("&nbsp;")
                 remove_clicked = False
                 if len(st.session_state.voucher_row_ids) > 1:
@@ -852,7 +852,7 @@ def _run(zecom_file, content_file, inv_file, mp_file,
             summary_bytes = make_summary_excel(ean_df, region, marketplace, pct,
                                                voucher_type, pid_decisions)
 
-            all_outputs.append({"pct": pct, "result": result,
+            all_outputs.append({"pct": pct, "voucher_type": voucher_type, "result": result,
                                 "summary_bytes": summary_bytes, "pid_decisions": pid_decisions})
 
         status.update(label="✅ Done!", state="complete")
@@ -897,6 +897,8 @@ def render_results():
 
     for out in all_outputs:
         pct           = out["pct"]
+        voucher_type = out["voucher_type"]
+        vt_short = "Bundle" if voucher_type == "Bundle Discount" else "VC"
         result        = out["result"]
         summary_bytes = out["summary_bytes"]
         pid_decisions = out["pid_decisions"]
