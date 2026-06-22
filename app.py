@@ -637,8 +637,6 @@ def main():
 
         unique_remarks = get_unique_remarks(zecom_df, excl_idx)
 
-        voucher_type = st.radio("Voucher Type (applies to all vouchers below)",
-                                ["Regular VC", "Bundle Discount"], horizontal=True)
 
         if "voucher_row_ids" not in st.session_state:
             st.session_state.voucher_row_ids = [0]
@@ -649,7 +647,7 @@ def main():
 
         def _render_voucher_row(rid, position):
             st.markdown(f"**Voucher {position}**")
-            rcol1, rcol2, rcol3 = st.columns([1, 3, 0.6])
+            rcol1, rcol2, rcol3 = st.columns([1, 1.5, 3, 0.6])
 
             with rcol1:
                 pct_key = f"vc_pct_{rid}"
@@ -659,7 +657,12 @@ def main():
                 pct_val = int(pct_clean) if pct_clean.isdigit() else None
                 if pct_raw and pct_val is None:
                     st.error("Whole number only, e.g. 10")
-
+            with rcol2:
+                voucher_type = st.selectbox(
+                    "Voucher Type",
+                    ["Regular VC", "Bundle Discount"],
+                    key=f"vc_type_{rid}"
+                )
             with rcol2:
                 st.markdown("**Eligible Remarks**")
                 selected = []
@@ -701,7 +704,7 @@ def main():
                 if len(st.session_state.voucher_row_ids) > 1:
                     remove_clicked = st.button("🗑️", key=f"vc_rm_{rid}", help="Remove this voucher")
 
-            return {"rid": rid, "pct": pct_val, "remarks": set(selected),
+            return {"rid": rid, "pct": pct_val, "voucher_type": voucher_type, "remarks": set(selected),
                    "include_no_remark": include_nr, "remove": remove_clicked}
 
         voucher_configs = []
@@ -796,6 +799,7 @@ def _run(zecom_file, content_file, inv_file, mp_file,
 
         for vi, row in enumerate(voucher_configs, start=1):
             pct = row["pct"]
+            voucher_type = row["voucher_type"]
             eligible_remarks  = row["remarks"]
             include_no_remark = row["include_no_remark"]
 
