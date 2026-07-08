@@ -25,20 +25,20 @@ REGION_CONFIG = {
         "zecom_sheet": "PH", "zecom_read": "ph", "article_col": "PIM Article#",
         "threshold": 650, "currency": "PHP 650",
         "mp_flags": {"Lazada": "LAZADA", "Shopee": "SHOPEE", "Zalora": "ZALORA"},
-        "default_excl": 71, "default_rrp": 32, "default_srp": 50,
+        "default_excl": 71, "default_rrp": 32, "default_srp": 50, "default_launch": 0,
     },
     "MY": {
         "zecom_sheet": "MY", "zecom_read": "header3", "article_col": "Style#",
-        "threshold": 36, "currency": "RM 36",
+        "threshold": 39, "currency": "RM 39",
         "mp_flags": {"Lazada": "Lazada", "Shopee": "Shopee",
                      "Zalora": "Zalora MP", "TikTok": "TIKTOK"},
-        "default_excl": 51, "default_rrp": 27, "default_srp": 49,
+        "default_excl": 51, "default_rrp": 27, "default_srp": 49, "default_launch": 0,
     },
     "SG": {
         "zecom_sheet": "SG", "zecom_read": "header3", "article_col": "STYLE#",
         "threshold": 16, "currency": "SGD 16",
         "mp_flags": {"Lazada": "Lazada", "Shopee": "Shopee", "Zalora": "Zalora"},
-        "default_excl": 52, "default_rrp": 26, "default_srp": 50,
+        "default_excl": 52, "default_rrp": 26, "default_srp": 50, "default_launch": 0,
     },
 }
 
@@ -131,6 +131,13 @@ def guess_srp_idx(df, fallback):
                 return i
     return fallback
 
+def guess_launch_idx(df, fallback):
+    for kw in ["launch date", "launch_date", "launchdate", "launch"]:
+        for i, col in enumerate(df.columns):
+            if kw in str(col).lower():
+                return i
+    return fallback
+
 def sample_vals(df, col_idx, n=6):
     vals = df.iloc[:, col_idx].dropna().unique()[:n]
     return ", ".join(str(v) for v in vals) if len(vals) else "(no values)"
@@ -201,10 +208,28 @@ def parse_special_articles(text_input: str, file_bytes: bytes = None, filename: 
 # ZECOM ARTICLE-LEVEL PROCESSING  (status + price + remark + special)
 # ─────────────────────────────────────────────────────────────────
 
-def classify_row(article, mp_status, status_ok, price_ok, remark,
+def classify_launch_date(raw_val, today: pd.Timestamp):
+    """
+    Returns (launch_ok: bool, launch_display: str, reason: str)
+    - Blank / unparseable / pre-2000 (Excel's 00-01-1900 default-date artifact) -> not ok, 'No Launch Date Set'
+    - Date strictly after today -> not ok, 'Future Launch (DD-MM-YYYY)'
+    - Otherwise (already launched) -> ok
+    """
+    dt = pd.to_datetime(raw_val, errors="coerce")
+    if pd.isna(dt):
+        return False, "Blank", "No Launch Date Set"
+    if dt.year < 2000:                       # catches Excel's 00-01-1900 / 1899-12-30 default artifact
+        return False, dt.strftime("%d-%m-%Y"), "No Launch Date Set (default date)"
+    disp = dt.strftime("%d-%m-%Y")
+    if dt.normalize() > today:
+        return False, disp, f"Future Launch ({disp})"
+    return True, disp, ""
+
+
+def classify_row(article, mp_status, status_ok, launch_ok, launch_reason, price_ok, remark,
                  eligible_remarks, include_no_remark, special_articles):
     """
-    Priority order: Special Article > MP Status > Price > Remark.
+    Priority order: Special Article > MP Status > Launch Date > Price > Remark.
     Returns (status, reason) where status in {'eligible','ineligible','no_remark'}.
     """
     if article in special_articles:
@@ -213,6 +238,9 @@ def classify_row(article, mp_status, status_ok, price_ok, remark,
     if not status_ok:
         disp = mp_status if mp_status not in ("", "NAN", None) else "BLANK"
         return "ineligible", f"MP Status = {disp}"
+
+    if not launch_ok:
+        return "ineligible", launch_reason
 
     if not price_ok:
         return "ineligible", "Price below threshold (RRP/SRP)"
@@ -228,12 +256,12 @@ def classify_row(article, mp_status, status_ok, price_ok, remark,
     return "ineligible", f'Remark not selected ("{r}")'
 
 
-def process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx,
+def process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx,
                   eligible_remarks: set, include_no_remark: bool,
-                  special_articles: set) -> pd.DataFrame:
+                  special_articles: set, apply_launch_filter: bool = True) -> pd.DataFrame:
     """
     Returns per-article DataFrame:
-      [article, mp_status, rrp, srp, remark, status, reason]
+      [article, mp_status, rrp, srp, remark, launch_date, status, reason]
     status: 'eligible' | 'ineligible' | 'no_remark'
     """
     cfg = REGION_CONFIG[region]
@@ -249,23 +277,40 @@ def process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx,
         mp_status_disp = pd.Series(["N/A"] * len(df), index=df.index)
         status_ok = pd.Series([True] * len(df), index=df.index)
 
-    threshold = cfg["threshold"]
+    threshold = cfg.get("threshold_overrides", {}).get(marketplace, cfg["threshold"])
     rrp = pd.to_numeric(df.iloc[:, rrp_idx], errors="coerce")
     srp = pd.to_numeric(df.iloc[:, srp_idx], errors="coerce")
-    srp_ok   = (srp == 0) | (srp >= threshold)
+    # SRP blank/NaN or 0 both mean "no special price entered" -> full price (RRP) -> OK.
+    # Only a SRP that's actually entered (>0) but below the threshold should fail.
+    srp_ok   = srp.isna() | (srp == 0) | (srp >= threshold)
     price_ok = (rrp > threshold) & srp_ok
+
+    # Launch Date — a product that hasn't launched yet (future date) or has no real
+    # launch date set (blank / Excel's 00-01-1900 default) is never voucher-eligible.
+    today = pd.Timestamp.now().normalize()
+    launch_ok_list, launch_disp_list, launch_reason_list = [], [], []
+    for raw_val in df.iloc[:, launch_idx]:
+        if apply_launch_filter:
+            ok, disp, reason = classify_launch_date(raw_val, today)
+        else:
+            _, disp, _ = classify_launch_date(raw_val, today)
+            ok, reason = True, ""   # filter disabled -> never blocks eligibility, but still shown
+        launch_ok_list.append(ok); launch_disp_list.append(disp); launch_reason_list.append(reason)
 
     remark_vals  = df.iloc[:, excl_idx]
     article_vals = df[cfg["article_col"]].astype(str).str.strip()
 
     work = pd.DataFrame({
-        "article":   article_vals.values,
-        "mp_status": mp_status_disp.values,
-        "status_ok": status_ok.values,
-        "rrp":       rrp.values,
-        "srp":       srp.values,
-        "price_ok":  price_ok.values,
-        "remark":    remark_vals.values,
+        "article":      article_vals.values,
+        "mp_status":    mp_status_disp.values,
+        "status_ok":    status_ok.values,
+        "launch_date":  launch_disp_list,
+        "launch_ok":    launch_ok_list,
+        "launch_reason":launch_reason_list,
+        "rrp":          rrp.values,
+        "srp":          srp.values,
+        "price_ok":     price_ok.values,
+        "remark":       remark_vals.values,
     })
 
     work = work[work["article"].str.match(r"^[\w_\-]+$", na=False)]
@@ -274,13 +319,14 @@ def process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx,
 
     statuses, reasons = [], []
     for row in work.itertuples(index=False):
-        s, r = classify_row(row.article, row.mp_status, row.status_ok, row.price_ok,
+        s, r = classify_row(row.article, row.mp_status, row.status_ok,
+                            row.launch_ok, row.launch_reason, row.price_ok,
                             row.remark, eligible_remarks, include_no_remark, special_articles)
         statuses.append(s); reasons.append(r)
     work["status"] = statuses
     work["reason"] = reasons
 
-    return work[["article", "mp_status", "rrp", "srp", "remark", "status", "reason"]]
+    return work[["article", "mp_status", "rrp", "srp", "remark", "launch_date", "status", "reason"]]
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -296,7 +342,7 @@ def map_to_eans(article_df, content_df, inventory_df):
                           on="EAN", how="left")
     merged["stock_qty"] = merged["stock_qty"].fillna(0)
     merged["has_stock"] = merged["stock_qty"] > 0
-    return merged[["article", "EAN", "mp_status", "rrp", "srp", "remark",
+    return merged[["article", "EAN", "mp_status", "rrp", "srp", "remark", "launch_date",
                    "status", "reason", "stock_qty", "has_stock"]]
 
 def eligible_ean_set(df): return set(df[(df["status"] == "eligible") & df["has_stock"]]["EAN"])
@@ -432,10 +478,66 @@ def process_zalora(ean_df, eligible_bytes, content_df):
     return df
 
 
+def _find_col(df, *keyword_sets):
+    """Return the first column whose lowercased name contains all keywords in any given tuple."""
+    for kws in keyword_sets:
+        for c in df.columns:
+            cl = str(c).strip().lower()
+            if all(kw in cl for kw in kws):
+                return c
+    return None
+
+
+def _autodetect_tiktok_header(raw_bytes):
+    """Scan the first ~15 rows of the relevant sheet for a row that looks like the real
+    header (contains both a SKU-ish cell and a Product-ID-ish cell)."""
+    xls = pd.ExcelFile(io.BytesIO(raw_bytes))
+    sheet = "Template" if "Template" in xls.sheet_names else xls.sheet_names[0]
+    raw = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=15)
+    for i in range(len(raw)):
+        row_vals = raw.iloc[i].astype(str).str.lower().tolist()
+        has_sku = any("sku" in v for v in row_vals)
+        has_pid = any(("product" in v and "id" in v) for v in row_vals)
+        if has_sku and has_pid:
+            return sheet, i
+    return sheet, None
+
+
 def process_tiktok(ean_df, tiktok_bytes):
-    df = pd.read_excel(io.BytesIO(tiktok_bytes), sheet_name="Template", header=2, skiprows=[3, 4])
-    df["_ean"] = df["Seller SKU"].apply(lambda v: _extract_ean(v, None))
-    df["_pid"] = df["Product ID"].apply(clean_id_str)
+    # 1) Try the known/expected TikTok template layout first.
+    df = None
+    try:
+        df = pd.read_excel(io.BytesIO(tiktok_bytes), sheet_name="Template", header=2, skiprows=[3, 4])
+    except Exception:
+        pass
+
+    sku_col = pid_col = None
+    if df is not None:
+        sku_col = _find_col(df, ("seller", "sku"), ("sku",))
+        pid_col = _find_col(df, ("product", "id"))
+
+    # 2) If that didn't work, auto-detect the real header row from the raw file.
+    if sku_col is None or pid_col is None:
+        sheet, header_row = _autodetect_tiktok_header(tiktok_bytes)
+        if header_row is not None:
+            df2 = pd.read_excel(io.BytesIO(tiktok_bytes), sheet_name=sheet, header=header_row)
+            sku_col2 = _find_col(df2, ("seller", "sku"), ("sku",))
+            pid_col2 = _find_col(df2, ("product", "id"))
+            if sku_col2 and pid_col2:
+                df, sku_col, pid_col = df2, sku_col2, pid_col2
+
+    # 3) Still nothing — fail with a clear, actionable message instead of a bare KeyError.
+    if sku_col is None or pid_col is None:
+        available = list(df.columns) if df is not None else ["(could not read file)"]
+        raise ValueError(
+            "Could not find a 'Seller SKU' and 'Product ID' column in the TikTok export. "
+            f"Columns actually found: {available}. "
+            "Please check the file's sheet name / header row, or share the file so the "
+            "column mapping can be fixed."
+        )
+
+    df["_ean"] = df[sku_col].apply(lambda v: _extract_ean(v, None))
+    df["_pid"] = df[pid_col].apply(clean_id_str)
     decisions = build_pid_decisions(df, ean_df)
     ids = [pid for pid, d in decisions.items() if d["decision"] == "Included"]
     return ids, decisions
@@ -457,21 +559,22 @@ def make_shopee_output(ids): return _to_excel_multi({"Sheet1": pd.DataFrame({"Pr
 def make_zalora_output(ann): return _to_excel_multi({"Eligible Products": ann})
 
 
-def make_summary_excel(ean_df, region, marketplace, pct, voucher_type, pid_decisions=None):
+def make_summary_excel(ean_df, region, marketplace, pct, voucher_type, pid_decisions=None,
+                       column_labels=None):
     detail = ean_df.copy()
     detail["status"] = detail["status"].map(
         {"eligible": "Eligible", "ineligible": "Ineligible", "no_remark": "No Remark"})
     detail = detail.rename(columns={
         "article": "Article", "mp_status": "MP Status", "rrp": "RRP", "srp": "SRP",
-        "remark": "Remark", "status": "Status", "reason": "Exclusion Reason",
-        "stock_qty": "Stock Qty", "has_stock": "In Stock",
+        "remark": "Remark", "launch_date": "Launch Date", "status": "Status",
+        "reason": "Exclusion Reason", "stock_qty": "Stock Qty", "has_stock": "In Stock",
     })
     detail.insert(0, "Region", region)
     detail.insert(1, "Marketplace", marketplace)
     detail.insert(2, "Voucher %", pct)
     detail.insert(3, "Voucher Type", voucher_type)
     cols = ["Region", "Marketplace", "Voucher %", "Voucher Type", "Article", "EAN",
-            "MP Status", "RRP", "SRP", "Remark", "Status", "Exclusion Reason",
+            "MP Status", "RRP", "SRP", "Remark", "Launch Date", "Status", "Exclusion Reason",
             "Stock Qty", "In Stock"]
     detail = detail[[c for c in cols if c in detail.columns]]
 
@@ -485,15 +588,30 @@ def make_summary_excel(ean_df, region, marketplace, pct, voucher_type, pid_decis
     n_price   = detail["Exclusion Reason"].astype(str).str.startswith("Price below threshold").sum()
     n_status  = detail["Exclusion Reason"].astype(str).str.startswith("MP Status").sum()
     n_remark  = detail["Exclusion Reason"].astype(str).str.startswith("Remark not selected").sum()
+    n_future_launch = detail["Exclusion Reason"].astype(str).str.startswith("Future Launch").sum()
+    n_no_launch     = detail["Exclusion Reason"].astype(str).str.startswith("No Launch Date Set").sum()
 
     stats_rows = [
         ("Region", region), ("Marketplace", marketplace),
         ("Voucher %", pct), ("Voucher Type", voucher_type),
+    ]
+
+    if column_labels:
+        stats_rows += [
+            ("ZeCom Exclusion / Campaign Column", column_labels.get("excl", "")),
+            ("ZeCom RRP Column", column_labels.get("rrp", "")),
+            ("ZeCom SRP Column", column_labels.get("srp", "")),
+            ("ZeCom Launch Date Column", column_labels.get("launch", "")),
+        ]
+
+    stats_rows += [
         ("Total Article-EAN rows", total),
         ("Eligible", int(n_elig)), ("Ineligible", int(n_inelig)), ("No Remark", int(n_norem)),
         ("Excluded — Special Article", int(n_special)),
-        ("Excluded — Price Below Threshold", int(n_price)),
         ("Excluded — MP Status Not YES", int(n_status)),
+        ("Excluded — Future Launch", int(n_future_launch)),
+        ("Excluded — No Launch Date Set", int(n_no_launch)),
+        ("Excluded — Price Below Threshold", int(n_price)),
         ("Excluded — Remark Not Selected", int(n_remark)),
     ]
 
@@ -583,7 +701,8 @@ def main():
         st.info(f"🚫 **{len(special_articles)}** special article(s) will always be excluded.")
 
     # ── ③ ZECOM COLUMNS + REMARKS + VOUCHER ──────────────────────
-    excl_idx = rrp_idx = srp_idx = zecom_df = None
+    excl_idx = rrp_idx = srp_idx = launch_idx = zecom_df = None
+    apply_launch_filter = True
     voucher_configs = []
     voucher_type = "Regular VC"
 
@@ -607,8 +726,9 @@ def main():
         d_excl = safe(guess_excl_idx(zecom_df, cfg["default_excl"]))
         d_rrp  = safe(guess_rrp_idx (zecom_df, cfg["default_rrp"]))
         d_srp  = safe(guess_srp_idx (zecom_df, cfg["default_srp"]))
+        d_launch = safe(guess_launch_idx(zecom_df, cfg["default_launch"]))
 
-        sc1, sc2, sc3 = st.columns(3)
+        sc1, sc2, sc3, sc4 = st.columns(4)
         with sc1:
             st.markdown("**📋 Exclusion / Campaign Column**")
             excl_sel = st.selectbox("excl", opts, index=d_excl, key="sel_excl", label_visibility="collapsed")
@@ -624,10 +744,28 @@ def main():
             srp_sel = st.selectbox("srp", opts, index=d_srp, key="sel_srp", label_visibility="collapsed")
             srp_idx = opts.index(srp_sel)
             st.caption(f"Sample: `{sample_vals(zecom_df, srp_idx)}`")
+        with sc4:
+            st.markdown("**📅 Launch Date Column**")
+            launch_sel = st.selectbox("launch", opts, index=d_launch, key="sel_launch", label_visibility="collapsed")
+            launch_idx = opts.index(launch_sel)
+            st.caption(f"Sample: `{sample_vals(zecom_df, launch_idx)}`")
 
-        cfg_cur = cfg["currency"]
-        st.info(f"**Price filter:** RRP > {cfg_cur}  |  SRP = 0 (full price ✓) or SRP ≥ {cfg_cur}  |  "
-                f"SRP > 0 but < {cfg_cur} → excluded")
+        apply_launch_filter = st.checkbox(
+            "🚫 Exclude Future Launch articles and articles with no/default Launch Date "
+            "(recommended — keep ON unless this region's tracker has no real launch date data)",
+            value=True, key="apply_launch_filter",
+        )
+
+        thr = cfg.get("threshold_overrides", {}).get(marketplace, cfg["threshold"])
+        ccy_symbol = cfg["currency"].split()[0]   # e.g. "RM", "PHP", "SGD"
+        thr_label  = f"{ccy_symbol} {thr}"
+        override_note = " (TikTok-specific)" if marketplace in cfg.get("threshold_overrides", {}) else ""
+        st.info(f"**Price filter for {marketplace}:** RRP > {thr_label}{override_note}  |  "
+                f"SRP blank or = 0 (full price ✓) or SRP ≥ {thr_label}  |  "
+                f"SRP > 0 but < {thr_label} → excluded")
+        if apply_launch_filter:
+            st.info("**Launch Date filter:** must be on/before today, and not blank/default — "
+                    "otherwise excluded as Future Launch / No Launch Date Set.")
 
         # ── ④ VOUCHER CONFIGURATION (multiple vouchers, each with its own remarks) ──
         st.markdown("---")
@@ -637,6 +775,8 @@ def main():
 
         unique_remarks = get_unique_remarks(zecom_df, excl_idx)
 
+        voucher_type = st.radio("Voucher Type (applies to all vouchers below)",
+                                ["Regular VC", "Bundle Discount"], horizontal=True)
 
         if "voucher_row_ids" not in st.session_state:
             st.session_state.voucher_row_ids = [0]
@@ -647,69 +787,59 @@ def main():
 
         def _render_voucher_row(rid, position):
             st.markdown(f"**Voucher {position}**")
-            rcol1, rcol2, rcol3, rcol4 = st.columns([1, 1.5, 3, 0.6])
+            rcol1, rcol2, rcol3 = st.columns([1, 3, 0.6])
 
-with rcol1:
-    pct_key = f"vc_pct_{rid}"
-    pct_raw = st.text_input(
-        "Voucher %",
-        value=st.session_state.get(pct_key, "10"),
-        key=pct_key,
-        placeholder="10"
-    )
-    pct_clean = pct_raw.strip().replace("%", "")
-    pct_val = int(pct_clean) if pct_clean.isdigit() else None
+            with rcol1:
+                pct_key = f"vc_pct_{rid}"
+                pct_raw = st.text_input("Voucher %", value=st.session_state.get(pct_key, "10"),
+                                        key=pct_key, placeholder="10")
+                pct_clean = pct_raw.strip().replace("%", "")
+                pct_val = int(pct_clean) if pct_clean.isdigit() else None
+                if pct_raw and pct_val is None:
+                    st.error("Whole number only, e.g. 10")
 
-with rcol2:
-    voucher_type = st.selectbox(
-        "Voucher Type",
-        ["Regular VC", "Bundle Discount"],
-        key=f"vc_type_{rid}"
-    )
+            with rcol2:
+                st.markdown("**Eligible Remarks**")
+                selected = []
+                include_nr = False
+                if not unique_remarks:
+                    st.warning("No remarks found in the selected exclusion column.")
+                else:
+                    qc1, qc2, _ = st.columns([1, 1, 3])
+                    with qc1:
+                        if st.button("✅ Select All", key=f"vc_sa_{rid}"):
+                            st.session_state[f"vc_remarks_{rid}"] = unique_remarks[:]
+                    with qc2:
+                        if st.button("❌ Clear All", key=f"vc_ca_{rid}"):
+                            st.session_state[f"vc_remarks_{rid}"] = []
 
-with rcol3:
-    st.markdown("**Eligible Remarks**")
+                    selected = st.multiselect(
+                        "remarks", options=unique_remarks, default=[],
+                        key=f"vc_remarks_{rid}", label_visibility="collapsed",
+                        help="Only articles whose remark is selected here will be eligible for this voucher.",
+                    )
+                    include_nr = st.checkbox("Include blank/no-remark articles as eligible",
+                                             value=False, key=f"vc_nr_{rid}")
 
-    selected = []
-    include_nr = False
+                    eligible_set = set(selected)
+                    if eligible_set or include_nr:
+                        df_prev = zecom_df
+                        if mp_col_for_preview and mp_col_for_preview in zecom_df.columns:
+                            df_prev = zecom_df[zecom_df[mp_col_for_preview].astype(str)
+                                               .str.strip().str.upper() == "YES"]
+                        n_match = df_prev.iloc[:, excl_idx].astype(str).str.strip().isin(eligible_set).sum()
+                        st.caption(f"📊 {n_match:,} articles with {marketplace}=YES match "
+                                  f"(before price/stock filter).")
+                    else:
+                        st.caption("⚠️ No remarks selected and no-remark inclusion is off.")
 
-    if not unique_remarks:
-        st.warning("No remarks found in the selected exclusion column.")
-    else:
-        qc1, qc2, _ = st.columns([1, 1, 3])
+            with rcol3:
+                st.markdown("&nbsp;")
+                remove_clicked = False
+                if len(st.session_state.voucher_row_ids) > 1:
+                    remove_clicked = st.button("🗑️", key=f"vc_rm_{rid}", help="Remove this voucher")
 
-        with qc1:
-            if st.button("✅ Select All", key=f"vc_sa_{rid}"):
-                st.session_state[f"vc_remarks_{rid}"] = unique_remarks[:]
-
-        with qc2:
-            if st.button("❌ Clear All", key=f"vc_ca_{rid}"):
-                st.session_state[f"vc_remarks_{rid}"] = []
-
-        selected = st.multiselect(
-            "remarks",
-            options=unique_remarks,
-            default=[],
-            key=f"vc_remarks_{rid}",
-            label_visibility="collapsed"
-        )
-
-        include_nr = st.checkbox(
-            "Include blank/no-remark articles as eligible",
-            value=False,
-            key=f"vc_nr_{rid}"
-        )
-
-with rcol4:
-    remove_clicked = False
-    if len(st.session_state.voucher_row_ids) > 1:
-        remove_clicked = st.button(
-            "🗑️",
-            key=f"vc_rm_{rid}",
-            help="Remove this voucher"
-        )
-
-            return {"rid": rid, "pct": pct_val, "voucher_type": voucher_type, "remarks": set(selected),
+            return {"rid": rid, "pct": pct_val, "remarks": set(selected),
                    "include_no_remark": include_nr, "remove": remove_clicked}
 
         voucher_configs = []
@@ -755,7 +885,7 @@ with rcol4:
 
     if st.button("🚀 Generate Eligible SKU Lists", disabled=bool(missing), type="primary"):
         _run(zecom_file, content_file, inv_file, mp_file,
-             region, marketplace, excl_idx, rrp_idx, srp_idx,
+             region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx, apply_launch_filter,
              special_articles, voucher_type, voucher_configs)
 
     # Always render last results (if any) — independent of the button click above,
@@ -768,7 +898,7 @@ with rcol4:
 # ─────────────────────────────────────────────────────────────────
 
 def _run(zecom_file, content_file, inv_file, mp_file,
-         region, marketplace, excl_idx, rrp_idx, srp_idx,
+         region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx, apply_launch_filter,
          special_articles, voucher_type, voucher_configs):
 
     with st.status("Processing…", expanded=True) as status:
@@ -776,7 +906,14 @@ def _run(zecom_file, content_file, inv_file, mp_file,
         st.write(f"📊 ZeCom — {region}…")
         try:
             zecom_df = read_zecom(zecom_file.getvalue(), region)
-            st.write(f"   ✓ {len(zecom_df):,} rows | excl=[{excl_idx}] rrp=[{rrp_idx}] srp=[{srp_idx}]")
+            st.write(f"   ✓ {len(zecom_df):,} rows | excl=[{excl_idx}] rrp=[{rrp_idx}] "
+                     f"srp=[{srp_idx}] launch=[{launch_idx}]")
+            column_labels = {
+                "excl":   f"{excel_col_letter(excl_idx)}: {zecom_df.columns[excl_idx]}",
+                "rrp":    f"{excel_col_letter(rrp_idx)}: {zecom_df.columns[rrp_idx]}",
+                "srp":    f"{excel_col_letter(srp_idx)}: {zecom_df.columns[srp_idx]}",
+                "launch": f"{excel_col_letter(launch_idx)}: {zecom_df.columns[launch_idx]}",
+            }
         except Exception as e:
             st.error(f"ZeCom read error: {e}"); status.update(label="❌ Error", state="error"); return
 
@@ -804,7 +941,6 @@ def _run(zecom_file, content_file, inv_file, mp_file,
 
         for vi, row in enumerate(voucher_configs, start=1):
             pct = row["pct"]
-            voucher_type = row["voucher_type"]
             eligible_remarks  = row["remarks"]
             include_no_remark = row["include_no_remark"]
 
@@ -812,8 +948,8 @@ def _run(zecom_file, content_file, inv_file, mp_file,
                      f"{len(eligible_remarks)} remark(s), "
                      f"{len(special_articles)} special exclusion(s)…")
 
-            art = process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx,
-                                eligible_remarks, include_no_remark, special_articles)
+            art = process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx,
+                                eligible_remarks, include_no_remark, special_articles, apply_launch_filter)
             n_elig  = (art["status"] == "eligible").sum()
             n_nr    = (art["status"] == "no_remark").sum()
             n_ineli = (art["status"] == "ineligible").sum()
@@ -855,9 +991,9 @@ def _run(zecom_file, content_file, inv_file, mp_file,
                            "QC summary will still be generated.")
 
             summary_bytes = make_summary_excel(ean_df, region, marketplace, pct,
-                                               voucher_type, pid_decisions)
+                                               voucher_type, pid_decisions, column_labels)
 
-            all_outputs.append({"pct": pct, "voucher_type": voucher_type, "result": result,
+            all_outputs.append({"pct": pct, "result": result,
                                 "summary_bytes": summary_bytes, "pid_decisions": pid_decisions})
 
         status.update(label="✅ Done!", state="complete")
@@ -902,8 +1038,6 @@ def render_results():
 
     for out in all_outputs:
         pct           = out["pct"]
-        voucher_type = out["voucher_type"]
-        vt_short = "Bundle" if voucher_type == "Bundle Discount" else "VC"
         result        = out["result"]
         summary_bytes = out["summary_bytes"]
         pid_decisions = out["pid_decisions"]
