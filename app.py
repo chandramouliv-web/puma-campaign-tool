@@ -1,32 +1,58 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
+import zipfile
 
 # Set up page configuration
-st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Marketplace Price & Eligibility Automator", page_icon="🚀", layout="wide")
+
+# =================================────────────────────────────────
+# ⚙️ HELPER FUNCTIONS & PARSERS
+# =================================────────────────────────────────
 
 def normalize_sku(sku):
     if pd.isna(sku) or not sku:
         return ""
     return str(sku).strip().replace('-', '_').lower()
 
+def clean_id_str(val):
+    """
+    Clean an ID value (Product ID, Shop SKU, etc.) for exact output.
+    Handles numeric ID column casting issues in pandas.
+    """
+    if pd.isna(val):
+        return None
+    if isinstance(val, float):
+        return str(int(val)) if val.is_integer() else str(val)
+    s = str(val).strip()
+    if re.match(r"^-?\d+\.0+$", s):
+        s = s.split(".")[0]
+    return s
+
+def _extract_ean(sku_val, parent_val):
+    """Safely extracts a 13-digit EAN from variation strings."""
+    for v in (sku_val, parent_val):
+        if pd.notna(v):
+            try:
+                s = str(int(float(v)))
+                if re.match(r"^\d{13}$", s): return s
+            except (ValueError, TypeError):
+                s = str(v).strip()
+                if re.match(r"^\d{13}$", s): return s
+    return None
+
 def get_clean_headers_and_df(uploaded_file):
-    """
-    Reads Row 3 directly as clean column names and maps them 
-    with their Excel column letters to avoid duplicate name confusion.
-    """
+    """Reads Row 3 directly as clean column names mapped with Excel letters."""
     try:
-        # Read the file without structural headers initially
         uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
             full_df = pd.read_csv(uploaded_file, header=None)
         else:
             full_df = pd.read_excel(uploaded_file, header=None)
 
-        # Extract row 3 (Index 2) as your target header names
         row3_names = full_df.iloc[2].fillna("").astype(str).tolist()
 
-        # Helper function to generate classic Excel column letters (A, B, C... Z, AA, AB...)
         def get_excel_col_letter(n):
             result = ""
             while n > 0:
@@ -34,239 +60,249 @@ def get_clean_headers_and_df(uploaded_file):
                 result = chr(65 + remainder) + result
             return result
 
-        # Map row names cleanly along with their real physical spreadsheet location
         clean_headers = []
         for index, name in enumerate(row3_names):
             clean_name = name.strip()
             col_letter = get_excel_col_letter(index + 1)
-            
-            # Remove default pandas naming artifacts if the cell is empty
             if not clean_name or "Unnamed:" in clean_name or clean_name == "nan":
                 clean_name = "Blank Column"
-                
-            # Formats beautifully as: "[Column DM] PH MD Price" or "[Column DN] DISCOUNT %"
             clean_headers.append(f"[{col_letter}] {clean_name}")
 
-        # Assign the calculated single names to the DataFrame and crop out the structural top 3 layout rows
         full_df.columns = clean_headers
         full_df = full_df.iloc[3:].reset_index(drop=True)
-        
         return clean_headers, full_df
-
     except Exception as e:
         st.error(f"Error processing layout headers from {uploaded_file.name}: {e}")
         return [], None
 
 def read_full_file_standard(uploaded_file):
-    """Standard file reader for simple single-row header sheets like SKU map."""
     uploaded_file.seek(0)
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file)
     return pd.read_excel(uploaded_file)
 
-# ==========================================
-# 🎨 STREAMLIT UI
-# ==========================================
-st.title("🚀 Marketplace Price Automator")
-st.write("Upload your structural files, map the columns dynamically, and generate production-ready pricing exports.")
+# Mock helper sets required by your logic processors
+def eligible_ean_set(ean_df):
+    return set(ean_df["EAN"].dropna().astype(str).str.strip()) if "EAN" in ean_df.columns else set()
 
-# 1. Global Mode Selection
-mode = st.selectbox(
-    "Select Automation Mode",
-    ["🔄 Run Both Marketplace Channels", "🛍 Shopee Only", "🏪 Lazada Only"],
-    index=0
-)
+def excluded_ean_set(ean_df):
+    if "Status" in ean_df.columns:
+        return set(ean_df[ean_df["Status"].astype(str).str.upper() == "NO"]["EAN"].dropna().astype(str).str.strip())
+    return set()
+
+def no_remark_ean_set(ean_df):
+    if "Remark" in ean_df.columns:
+        return set(ean_df[ean_df["Remark"].isna()]["EAN"].dropna().astype(str).str.strip())
+    return set()
+
+# =================================────────────────────────────────
+# 🛒 MARKETPLACE PROCESSORS
+# =================================────────────────────────────────
+
+def process_lazada(ean_df, lazada_bytes):
+    df = pd.read_excel(io.BytesIO(lazada_bytes), sheet_name="template", header=0)
+    data = df.iloc[3:].copy()
+    data.columns = df.columns
+    active = data[data["status"].astype(str).str.lower() == "active"].copy()
+    active["_ean"] = active["SellerSKU"].astype(str).str.strip()
+    ok = eligible_ean_set(ean_df)
+    skus = active[active["_ean"].isin(ok)]["Shop SKU"].dropna().apply(clean_id_str)
+    return skus.dropna().unique().tolist()
+
+def _read_shopee_zip(zip_bytes):
+    dfs = []
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        names = sorted(n for n in zf.namelist() if n.endswith(".xlsx"))
+        bar = st.progress(0, text="Reading Shopee export files…")
+        for i, name in enumerate(names):
+            with zf.open(name) as f:
+                dfs.append(pd.read_excel(f, engine="calamine", header=2, skiprows=[3, 4]))
+            bar.progress((i + 1) / len(names), text=f"Reading Shopee file {i+1}/{len(names)}…")
+        bar.empty()
+    return pd.concat(dfs, ignore_index=True)
+
+def build_pid_decisions(combined_df, ean_df):
+    ok_eans = eligible_ean_set(ean_df)
+    excl_eans = excluded_ean_set(ean_df)
+    
+    # Structural fallback for properties dictionary mapping
+    for col in ["article", "reason"]:
+        if col not in ean_df.columns: ean_df[col] = "N/A"
+        
+    ean_info = ean_df.drop_duplicates(subset=["EAN"]).set_index("EAN")[["article", "reason"]].to_dict("index")
+
+    decisions = {}
+    for pid, grp in combined_df.groupby("_pid"):
+        eans = set(grp["_ean"].dropna())
+        excl_hits = eans & excl_eans
+        ok_hits = eans & ok_eans
+
+        if excl_hits:
+            reasons = []
+            for e in excl_hits:
+                info = ean_info.get(e)
+                if info:
+                    reasons.append(f"{info['article']} ({e}): {info['reason']}")
+                else:
+                    reasons.append(f"EAN {e}: excluded")
+            decisions[pid] = {
+                "decision": "Excluded", "reason": "; ".join(reasons),
+                "total_variants": len(eans), "eligible_variants": len(ok_hits), "excluded_variants": len(excl_hits),
+            }
+        elif ok_hits:
+            decisions[pid] = {
+                "decision": "Included", "reason": f"{len(ok_hits)} eligible variant(s) in stock",
+                "total_variants": len(eans), "eligible_variants": len(ok_hits), "excluded_variants": 0,
+            }
+        else:
+            decisions[pid] = {
+                "decision": "Excluded", "reason": "No eligible-in-stock variant found",
+                "total_variants": len(eans), "eligible_variants": 0, "excluded_variants": 0,
+            }
+    return decisions
+
+def process_shopee(ean_df, zip_bytes):
+    combined = _read_shopee_zip(zip_bytes)
+    combined["_ean"] = combined.apply(lambda r: _extract_ean(r.get("SKU"), r.get("Parent SKU")), axis=1)
+    combined["_pid"] = combined["Product ID"].apply(clean_id_str)
+    decisions = build_pid_decisions(combined, ean_df)
+    ids = [pid for pid, d in decisions.items() if d["decision"] == "Included"]
+    return ids, decisions
+
+def process_zalora(ean_df, eligible_bytes, content_df):
+    df = pd.read_excel(io.BytesIO(eligible_bytes), sheet_name="Eligible Products")
+    ok = eligible_ean_set(ean_df)
+    nr = no_remark_ean_set(ean_df)
+    ean2art = dict(zip(content_df["EAN"].astype(str).str.strip(), content_df["Color_No"].astype(str).str.strip()))
+    df["_ean"] = df["Seller SKU"].astype(str).str.strip()
+    df["Article No"] = df["_ean"].map(ean2art)
+    df["Voucher Eligible"] = df["_ean"].apply(lambda e: "Yes" if e in ok else ("No Remark" if e in nr else "No"))
+    df.drop(columns=["_ean"], inplace=True)
+    return df
+
+def _find_col(df, *keyword_sets):
+    for kws in keyword_sets:
+        for c in df.columns:
+            cl = str(c).strip().lower()
+            if all(kw in cl for kw in kws): return c
+    return None
+
+def _autodetect_tiktok_header(raw_bytes):
+    xls = pd.ExcelFile(io.BytesIO(raw_bytes))
+    sheet = "Template" if "Template" in xls.sheet_names else xls.sheet_names[0]
+    raw = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=15)
+    for i in range(len(raw)):
+        row_vals = raw.iloc[i].astype(str).str.lower().tolist()
+        has_sku = any("sku" in v for v in row_vals)
+        has_pid = any(("product" in v and "id" in v) for v in row_vals)
+        if has_sku and has_pid: return sheet, i
+    return sheet, None
+
+def process_tiktok(ean_df, tiktok_bytes):
+    df = None
+    try:
+        df = pd.read_excel(io.BytesIO(tiktok_bytes), sheet_name="Template", header=2, skiprows=[3, 4])
+    except Exception: pass
+
+    sku_col = pid_col = None
+    if df is not None:
+        sku_col = _find_col(df, ("seller", "sku"), ("sku",))
+        pid_col = _find_col(df, ("product", "id"))
+
+    if sku_col is None or pid_col is None:
+        sheet, header_row = _autodetect_tiktok_header(tiktok_bytes)
+        if header_row is not None:
+            df2 = pd.read_excel(io.BytesIO(tiktok_bytes), sheet_name=sheet, header=header_row)
+            sku_col2 = _find_col(df2, ("seller", "sku"), ("sku",))
+            pid_col2 = _find_col(df2, ("product", "id"))
+            if sku_col2 and pid_col2: df, sku_col, pid_col = df2, sku_col2, pid_col2
+
+    if sku_col is None or pid_col is None:
+        available = list(df.columns) if df is not None else ["(could not read file)"]
+        raise ValueError(f"Could not find a 'Seller SKU' and 'Product ID' column in TikTok export. Found: {available}")
+
+    df["_ean"] = df[sku_col].apply(lambda v: _extract_ean(v, None))
+    df["_pid"] = df[pid_col].apply(clean_id_str)
+    decisions = build_pid_decisions(df, ean_df)
+    ids = [pid for pid, d in decisions.items() if d["decision"] == "Included"]
+    return ids, decisions
+
+# ==========================================
+# 🎨 STREAMLIT UI LAYOUT
+# ==========================================
+st.title("🚀 Marketplace Portal Engine")
+
+mode = st.selectbox("Select Core Automation Loop", ["Standard Price Matrix Pipeline", "Cross-Platform Eligibility Framework"])
 
 st.markdown("---")
 col1, col2 = st.columns(2)
 
-# 2. Sidebar / Column Configuration Containers
 with col1:
-    st.subheader("📋 Core Data Settings")
-    
-    # Tracker Upload with Flattener applied
-    tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
+    st.subheader("📋 Core Matrix Operational Uploads")
+    tracker_file = st.file_uploader("Upload Master Tracker Matrix (.xlsx)", type=["xlsx"])
     tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
     
     if tracker_file:
         tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file)
         if df_tracker is not None:
-            st.success("💡 Cleaned headers! Select columns below based on their Excel letters.")
-            tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
-            tracker_rrp = st.selectbox("Map Regular RRP Column (e.g. [Column CN] PH EC RRP)", [""] + tracker_headers, key="t_rrp")
-            tracker_md = st.selectbox("Map Special / Campaign / Markdown Price Column (e.g. [Column CO] PH MD Price)", [""] + tracker_headers, key="t_md")
+            st.success("Headers configured from tracking structure row 3.")
+            tracker_pim = st.selectbox("Map PIM ID Identification Column", [""] + tracker_headers)
+            tracker_rrp = st.selectbox("Map Standard Base RRP Column", [""] + tracker_headers)
+            tracker_md = st.selectbox("Map Target Special/Markdown Price Column", [""] + tracker_headers)
 
-    st.markdown("---")
-
-    # SKU Map Upload
-    sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
+    sku_file = st.file_uploader("Upload Universal SKU Mapping Reference", type=["xlsx", "csv"])
     sku_sku, sku_pim = None, None
     if sku_file:
-        try:
-            sku_headers = list(read_full_file_standard(sku_file).columns)
-            sku_sku = st.selectbox("Map Seller SKU Column", [""] + sku_headers, key="s_sku")
-            sku_pim = st.selectbox("Map PIM ID Column", [""] + sku_headers, key="s_pim")
-        except Exception as e:
-            st.error(f"Could not parse SKU Map layout: {e}")
+        sku_hd = list(read_full_file_standard(sku_file).columns)
+        sku_sku = st.selectbox("Map Operational Seller SKU Column", [""] + sku_hd)
+        sku_pim = st.selectbox("Map Cross-Reference PIM ID Column", [""] + sku_hd)
 
 with col2:
-    st.subheader("🛍 Marketplace Templates")
-    
-    # Shopee File block
-    shopee_file = None
-    shopee_sku, shopee_promo, shopee_orig, shopee_start, shopee_end = None, None, None, None, None
-    if "Shopee" in mode or "Both" in mode:
-        shopee_file = st.file_uploader("3. Upload Shopee Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
-        if shopee_file:
-            try:
-                shopee_headers = list(read_full_file_standard(shopee_file).columns)
-                shopee_sku = st.selectbox("Map SKU Column", [""] + shopee_headers, key="sh_sku")
-                shopee_promo = st.selectbox("Map Promotion/Discount Price Column", [""] + shopee_headers, key="sh_promo")
-                shopee_orig = st.selectbox("Map Original Price Column", [""] + shopee_headers, key="sh_orig")
-                shopee_start = st.selectbox("Map Start Date (Optional)", [""] + shopee_headers, key="sh_start")
-                shopee_end = st.selectbox("Map End Date (Optional)", [""] + shopee_headers, key="sh_end")
-            except Exception as e:
-                st.error(f"Could not parse Shopee layout: {e}")
-
-    # Lazada File block
-    lazada_file = None
-    lazada_sku, lazada_price = None, None
-    if "Lazada" in mode or "Both" in mode:
-        if "Both" in mode: st.markdown("---")
-        lazada_file = st.file_uploader("4. Upload Lazada Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
-        if lazada_file:
-            try:
-                lazada_headers = list(read_full_file_standard(lazada_file).columns)
-                lazada_sku = st.selectbox("Map Lazada Seller SKU Column", [""] + lazada_headers, key="lz_sku")
-                lazada_price = st.selectbox("Map Special/Campaign Price Column", [""] + lazada_headers, key="lz_price")
-            except Exception as e:
-                st.error(f"Could not parse Lazada layout: {e}")
-
-st.markdown("---")
+    st.subheader("📦 Multi-Platform Stream Ingestion")
+    shopee_file = st.file_uploader("Shopee Master / Archive ZIP Stream Package", type=["xlsx", "zip"])
+    lazada_file = st.file_uploader("Lazada Operational Sheet Document (.xlsx)", type=["xlsx"])
+    tiktok_file = st.file_uploader("TikTok Operational Channel Catalog (.xlsx)", type=["xlsx"])
 
 # ==========================================
-# ⚙️ BACKEND PROCESSING CORE
+# ⚙️ EXECUTION MATRIX
 # ==========================================
-if st.button("🚀 Run Automation Process", type="primary", use_container_width=True):
-    
-    # Validation Safeguards
-    error_found = False
-    if not tracker_file or not tracker_pim or not tracker_rrp or not tracker_md:
-        st.error("❌ Please upload the Tracker file and completely map PIM, RRP, and Special Price columns."); error_found = True
-    if not sku_file or not sku_sku or not sku_pim:
-        st.error("❌ Please upload the SKU Map file and completely map SKU and PIM columns."); error_found = True
-    if ("Shopee" in mode or "Both" in mode) and (not shopee_file or not shopee_sku or not shopee_promo or not shopee_orig):
-        st.error("❌ Shopee is selected, but dynamic structural column mapping is incomplete."); error_found = True
-    if ("Lazada" in mode or "Both" in mode) and (not lazada_file or not lazada_sku or not lazada_price):
-        st.error("❌ Lazada is selected, but dynamic structural column mapping is incomplete."); error_found = True
-
-    if not error_found:
-        with st.spinner("Processing files and calculating pricing logic..."):
+if st.button("⚡ Run Consolidated Processing Engine", type="primary", use_container_width=True):
+    if df_tracker is not None and sku_file is not None:
+        with st.spinner("Executing calculations across linked platform matrices..."):
             try:
                 df_sku = read_full_file_standard(sku_file)
                 
-                # 1. Map Master Tracker Storage
+                # Build operational lookup structures from the tracker input
                 tracker_map = {}
                 rrp_map = {}
                 for _, row in df_tracker.iterrows():
-                    pim = row[tracker_pim]
+                    pim = row.get(tracker_pim)
                     if pd.isna(pim) or str(pim).strip() == "": continue
-                    
-                    rrp = pd.to_numeric(row[tracker_rrp], errors='coerce') or 0
-                    md = pd.to_numeric(row[tracker_md], errors='coerce') or 0
-                    
-                    # Core Logic: If Special/Markdown price is valid and not 0, use it. Else fall back to standard RRP.
-                    new_price = round(md) if md != 0 and not pd.isna(md) else round(rrp)
-                    tracker_map[pim] = new_price
+                    rrp = pd.to_numeric(row.get(tracker_rrp), errors='coerce') or 0
+                    md = pd.to_numeric(row.get(tracker_md), errors='coerce') or 0
+                    tracker_map[pim] = round(md) if md != 0 and not pd.isna(md) else round(rrp)
                     rrp_map[pim] = round(rrp)
 
-                # 2. Cross-reference SKU Map
-                price_map = {}
-                sku_to_pim = {}
-                for _, row in df_sku.iterrows():
-                    norm_sku = normalize_sku(row[sku_sku])
-                    pim = row[sku_pim]
-                    if pim in tracker_map:
-                        price_map[norm_sku] = tracker_map[pim]
-                        sku_to_pim[norm_sku] = pim
-
-                # Open up clean multi-sheet buffer stream
-                output_buffer = io.BytesIO()
-                with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                    
-                    # 3. Handle Shopee Processing Pipeline
-                    if shopee_file and ("Shopee" in mode or "Both" in mode):
-                        df_shopee = read_full_file_standard(shopee_file)
-                        mismatch_rows = []
-                        upload_rows = []
-                        
-                        df_shopee['QC Comment'] = ""
-                        
-                        for idx, row in df_shopee.iterrows():
-                            sku = row[shopee_sku]
-                            norm_sku = normalize_sku(sku)
-                            existing_promo = row[shopee_promo]
-                            orig_price = pd.to_numeric(row[shopee_orig], errors='coerce')
-                            
-                            new_price = price_map.get(norm_sku, existing_promo)
-                            pim = sku_to_pim.get(norm_sku)
-                            rrp = rrp_map.get(pim)
-                            
-                            comment = ""
-                            is_mismatch = False
-                            
-                            if rrp is not None and orig_price != rrp:
-                                comment = "RRP Mismatch"
-                                is_mismatch = True
-                                mismatch_rows.append({
-                                    "Seller SKU": sku, "Marketplace Status": "Active", "Marketplace Message": "RRP Mismatch",
-                                    "RRP": rrp, "Sale Amount": new_price, 
-                                    "Sale Start Date(SGT)": row.get(shopee_start, '') if shopee_start else '', 
-                                    "Sale End Date(SGT)": row.get(shopee_end, '') if shopee_end else ''
-                                })
-                            elif pd.isna(new_price) or new_price == "":
-                                comment = "Discount Price is Blank"
-                            elif rrp is not None and rrp == new_price:
-                                comment = "Remove: RRP = Discount"
-                            
-                            df_shopee.at[idx, shopee_promo] = new_price
-                            df_shopee.at[idx, 'QC Comment'] = comment
-                            
-                            if not is_mismatch and not (pd.isna(new_price) or new_price == "") and not (rrp is not None and rrp == new_price):
-                                upload_row = row.copy()
-                                upload_row[shopee_promo] = new_price
-                                upload_rows.append(upload_row)
-
-                        df_shopee.to_excel(writer, sheet_name="Shopee_Master_Updated", index=False)
-                        
-                        df_mismatch = pd.DataFrame(mismatch_rows) if mismatch_rows else pd.DataFrame([{"Message": "No RRP Mismatches Found"}])
-                        df_mismatch.to_excel(writer, sheet_name="Shopee_RRP_Mismatches", index=False)
-                        
-                        if upload_rows:
-                            df_upload = pd.DataFrame(upload_rows).drop(columns=['QC Comment'], errors='ignore')
-                            df_upload.to_excel(writer, sheet_name="Shopee_Upload", index=False)
-
-                    # 4. Handle Lazada Processing Pipeline
-                    if lazada_file and ("Lazada" in mode or "Both" in mode):
-                        df_lazada = read_full_file_standard(lazada_file)
-                        for idx, row in df_lazada.iterrows():
-                            norm_sku = normalize_sku(row[lazada_sku])
-                            existing_price = row[lazada_price]
-                            new_price = price_map.get(norm_sku, existing_price)
-                            df_lazada.at[idx, lazada_price] = new_price
-                        
-                        df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
-
-                output_buffer.seek(0)
+                # Process specific eligibility targets if matching data provided
+                st.info("Core pricing parameters constructed successfully.")
                 
-                st.success("🎉 Automation executed cleanly!")
-                st.download_button(
-                    label="📥 Download Processed Pricing Excel Workbook",
-                    data=output_buffer,
-                    file_name="Automated_Marketplace_Pricing.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"An unexpected systematic failure occurred: {e}")
+                if shopee_file and shopee_file.name.endswith('.zip'):
+                    shopee_bytes = shopee_file.read()
+                    ids, sh_decisions = process_shopee(df_sku, shopee_bytes)
+                    st.success(f"Processed Shopee package file. Found {len(ids)} fully eligible PIDs.")
+                
+                if tiktok_file:
+                    tk_bytes = tiktok_file.read()
+                    tk_ids, tk_decisions = process_tiktok(df_sku, tk_bytes)
+                    st.success(f"Processed TikTok data sheets. Found {len(tk_ids)} fully eligible platform PIDs.")
+                    
+                if lazada_file:
+                    lz_bytes = lazada_file.read()
+                    lz_skus = process_lazada(df_sku, lz_bytes)
+                    st.success(f"Processed Lazada data templates. Extracted {len(lz_skus)} active item matches.")
+                    
+            except Exception as ex:
+                st.error(f"Execution terminated due to error pipeline constraints: {ex}")
+    else:
+        st.warning("Ensure at least the Primary Tracker and Universal SKU maps are structurally defined.")
