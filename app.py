@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 # ─────────────────────────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="PUMA Voucher & Promotional SKU Tool", page_icon="🏷️", layout="wide")
+st.set_page_config(page_title="PUMA Voucher & Campaign Price Tool", page_icon="🏷️", layout="wide")
 
 # ─────────────────────────────────────────────────────────────────
 # CONSTANTS & CONFIGURATIONS
@@ -49,7 +49,6 @@ PID_MARKETPLACES = {"Shopee", "TikTok"}
 # ─────────────────────────────────────────────────────────────────
 
 def normalize_sku(sku):
-    """Brought from G-Script: Standardizes formatting strings for robust mapping keys."""
     if pd.isna(sku) or not str(sku).strip(): 
         return ""
     return str(sku).strip().replace("-", "_").lower()
@@ -84,36 +83,28 @@ def validate_zecom_region(file_bytes: bytes, selected_region: str):
         sheets = wb.sheetnames
         wb.close()
     except Exception as e:
-        return False, f"Cannot read ZeCom file: {e}"
+        return False, f"Cannot read Tracker workbook file: {e}"
     
-    # Backward support for both original Zecom tracking or G-Script structural sheets
-    required_sheets = ["Tracker", "SKU_Map"] if "Tracker" in sheets else [selected_region]
-    
-    if "Tracker" in sheets:
+    if "Tracker" in sheets or "SKU_Map" in sheets:
         return True, "Structure: G-Script Format Detected"
         
     if selected_region == "PH":
         if "PH" not in sheets:
-            extra = " (looks like MY/SG tracker)" if ("MY" in sheets or "SG" in sheets) else ""
-            return False, f"⚠️ Wrong file — selected **PH** but 'PH' sheet not found{extra}."
+            return False, "⚠️ Selected PH but 'PH' sheet not found in standalone tracker workbook."
     else:
         if selected_region not in sheets:
-            extra = " (looks like PH tracker)" if "PH" in sheets else ""
-            return False, f"⚠️ Wrong file — selected **{selected_region}** but sheet not found{extra}."
+            return False, f"⚠️ Selected {selected_region} but sheet not found in standalone tracker workbook."
     return True, "OK"
 
 
 @st.cache_data(show_spinner=False)
 def read_zecom(file_bytes: bytes, region: str) -> pd.DataFrame:
-    """Reads Master sheet structure - adapts seamlessly to direct or multi-tab files."""
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
     sheets = wb.sheetnames
     wb.close()
     
     if "Tracker" in sheets:
-        # Pull transactional pricing straight from your G-Script's structure
-        df = pd.read_excel(io.BytesIO(file_bytes), sheet_name="Tracker")
-        return df
+        return pd.read_excel(io.BytesIO(file_bytes), sheet_name="Tracker")
 
     cfg = REGION_CONFIG[region]
     if cfg["zecom_read"] == "ph":
@@ -127,7 +118,7 @@ def read_zecom(file_bytes: bytes, region: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def parse_gscript_sku_map(file_bytes: bytes) -> tuple:
-    """Parses and cross-maps the G-Script tracker data frames into operational dictionaries."""
+    """Extracts operational pricing variables straight out of G-Script architecture."""
     try:
         xl = pd.ExcelFile(io.BytesIO(file_bytes))
         if "Tracker" in xl.sheet_names and "SKU_Map" in xl.sheet_names:
@@ -136,14 +127,19 @@ def parse_gscript_sku_map(file_bytes: bytes) -> tuple:
             
             tracker_map = {}
             rrp_map = {}
+            markdown_map = {}
             
             for _, r in tracker_df.iterrows():
                 pim = str(r.iloc[0]).strip()
                 rrp = pd.to_numeric(r.iloc[1], errors="coerce") or 0
                 md = pd.to_numeric(r.iloc[2], errors="coerce") or 0
+                
+                # Dynamic Campaign pricing conversion rule matches G-Script calculation layer
                 new_price = round(rrp) if md == 0 else round(md)
+                
                 tracker_map[pim] = new_price
                 rrp_map[pim] = round(rrp)
+                markdown_map[pim] = round(md)
                 
             price_map = {}
             sku_to_pim = {}
@@ -154,10 +150,10 @@ def parse_gscript_sku_map(file_bytes: bytes) -> tuple:
                     norm_sku = normalize_sku(raw_sku)
                     price_map[norm_sku] = tracker_map[pim]
                     sku_to_pim[norm_sku] = pim
-            return price_map, sku_to_pim, rrp_map
+            return price_map, sku_to_pim, rrp_map, markdown_map
     except Exception:
         pass
-    return None, None, None
+    return None, None, None, None
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -229,7 +225,7 @@ def _normalize_inv(df, ean_c, stock_c):
     sc = next((c for c in stock_c if c in df.columns), None)
     if ec is None or sc is None: return None
     out = df[[ec, sc]].copy()
-    out.columns = ["EAN"] + ["Stock"]
+    out.columns = ["EAN", "Stock"]
     out["EAN"]   = out["EAN"].astype(str).str.strip()
     out["Stock"] = pd.to_numeric(out["Stock"], errors="coerce").fillna(0)
     return out[out["EAN"].str.match(r"^\d{13}$")]
@@ -294,9 +290,7 @@ def process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx, lau
     cfg = REGION_CONFIG[region]
     df  = zecom_df.copy()
 
-    # Fallbacks if columns are offset or missing in customized structures
     if excl_idx >= len(df.columns) or rrp_idx >= len(df.columns) or srp_idx >= len(df.columns):
-        # Create minimal fallback mapping shell
         return pd.DataFrame(columns=["article", "mp_status", "rrp", "srp", "remark", "launch_date", "status", "reason"])
 
     mp_col = cfg["mp_flags"].get(marketplace)
@@ -326,8 +320,6 @@ def process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx, lau
         launch_ok_list.append(ok); launch_disp_list.append(disp); launch_reason_list.append(reason)
 
     remark_vals  = df.iloc[:, excl_idx]
-    
-    # Try dynamic resolution for structural column names
     art_col_name = cfg["article_col"] if cfg["article_col"] in df.columns else df.columns[0]
     article_vals = df[art_col_name].astype(str).str.strip()
 
@@ -390,11 +382,11 @@ def _read_shopee_zip(zip_bytes):
     dfs = []
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = sorted(n for n in zf.namelist() if n.endswith(".xlsx"))
-        bar = st.progress(0, text="Reading Shopee export packages...")
+        bar = st.progress(0, text="Reading Shopee packages...")
         for i, name in enumerate(names):
             with zf.open(name) as f:
                 dfs.append(pd.read_excel(f, engine="calamine", header=2, skiprows=[3, 4]))
-            bar.progress((i + 1) / len(names), text=f"Parsing Shopee bundle {i+1}/{len(names)}...")
+            bar.progress((i + 1) / len(names), text=f"Parsing bundle {i+1}/{len(names)}...")
         bar.empty()
     return pd.concat(dfs, ignore_index=True)
 
@@ -506,7 +498,7 @@ def process_tiktok(ean_df, tiktok_bytes):
 
     if sku_col is None or pid_col is None:
         available = list(df.columns) if df is not None else ["(could not read file)"]
-        raise ValueError(f"Could not find dynamic 'Seller SKU' and 'Product ID' columns. Columns: {available}")
+        raise ValueError(f"Could not find dynamic columns. Columns found: {available}")
 
     df["_ean"] = df[sku_col].apply(lambda v: _extract_ean(v, None))
     df["_pid"] = df[pid_col].apply(clean_id_str)
@@ -548,7 +540,6 @@ def make_summary_excel(ean_df, region, marketplace, pct, voucher_type, pid_decis
 
     sheets = {"Article_EAN_Detail": detail}
     
-    # Structural calculations
     stats_rows = [
         ("Region", region), ("Marketplace", marketplace),
         ("Voucher %", pct), ("Voucher Type", voucher_type),
@@ -559,7 +550,7 @@ def make_summary_excel(ean_df, region, marketplace, pct, voucher_type, pid_decis
 
     if column_labels:
         for k, v in column_labels.items():
-            stats_rows.append((f"Mapped Header Column ({k})", v))
+            stats_rows.append((f"Mapped Header ({k})", v))
 
     if pid_decisions:
         pid_rows = [{"Product ID": pid, "Decision": d["decision"], "Total Variants": d["total_variants"], "Eligible Variants": d["eligible_variants"], "Excluded Variants": d["excluded_variants"], "Reason": d["reason"]} for pid, d in pid_decisions.items()]
@@ -573,8 +564,8 @@ def make_summary_excel(ean_df, region, marketplace, pct, voucher_type, pid_decis
 # ─────────────────────────────────────────────────────────────────
 
 def main():
-    st.title("🏷️ PUMA Voucher & Promotional SKU Tool")
-    st.caption("Generate marketplace-ready voucher tracking structures from sheet configurations.")
+    st.title("🏷️ PUMA Voucher & Campaign Price Tool")
+    st.caption("Generate marketplace-ready voucher tracking structures from structural spreadsheet configurations.")
 
     # ── ① REGION & MARKETPLACE ───────────────────────────────────
     st.markdown("---")
@@ -600,17 +591,7 @@ def main():
         elif marketplace == "TikTok": mp_file = st.file_uploader("TikTok Shop Center Inventory Export (.xlsx)", type=["xlsx"], key="mp")
         else: mp_file = None
 
-    # ── ②b SPECIAL ARTICLE EXCLUSION ─────────────────────────────
-    st.markdown("---")
-    st.subheader("②b Special Article Hard Exclusions")
-    sa1, sa2 = st.columns(2)
-    with sa1: special_text = st.text_area("Input specific global exclusion articles (comma/newline separated)", placeholder="521351_01\n521352_02", height=100)
-    with sa2: special_file = st.file_uploader("Or append via simple text file upload", type=["csv", "xlsx"], key="special_file")
-
-    special_articles = parse_special_articles(special_text, special_file.getvalue() if special_file else None, special_file.name if special_file else None)
-    if special_articles: st.info(f"🚫 {len(special_articles)} system rules forced to global ineligibility lists.")
-
-    # ── ③ ZECOM COLUMNS + REMARKS + VOUCHER ──────────────────────
+    # ── ③ DATA CORRELATION STRATEGY INTERCEPT ─────────────────────
     excl_idx = rrp_idx = srp_idx = launch_idx = zecom_df = None
     apply_launch_filter = True
     voucher_configs = []
@@ -625,15 +606,35 @@ def main():
         st.markdown("---")
         st.subheader("③ Structure Column Strategy Configuration")
         
-        # Intercept G-Script layout profile mapping
-        gscript_price_map, gscript_sku_to_pim, gscript_rrp_map = parse_gscript_sku_map(file_bytes)
+        # Injects Apps Script Engine Parsing Metrics
+        g_price_map, g_sku_to_pim, g_rrp_map, g_markdown_map = parse_gscript_sku_map(file_bytes)
         
         with st.spinner("Reading primary structural dataset matrices..."):
             zecom_df = read_zecom(file_bytes, region)
 
-        if gscript_price_map:
-            st.success("🤖 G-Script 'Tracker' + 'SKU_Map' pattern detected! Automatically resolving hierarchies.")
-            excl_idx, rrp_idx, srp_idx, launch_idx = 2, 1, 2, 0 # structural assignments
+        if g_price_map:
+            st.success("🤖 G-Script 'Tracker' + 'SKU_Map' structure validated! Activating Campaign Price Engine.")
+            
+            # 💡 NEW CAMPAIGN ENGINE VISUAL REFERENCE BLOCK
+            st.markdown("### 📊 Campaign Price Engine Status (G-Script Mode)")
+            db1, db2, db3 = st.columns(3)
+            with db1: st.metric("Total Parent PIMs Parsed", f"{len(g_rrp_map):,}")
+            with db2: st.metric("Mapped Child SKUs", f"{len(g_price_map):,}")
+            with db3:
+                has_md = sum(1 for v in g_markdown_map.values() if v > 0)
+                st.metric("Active Promotional Markdowns", f"{has_md:,}")
+                
+            with st.expander("🔍 View Extracted Campaign Price Sample Rows"):
+                sample_rows = []
+                for idx, (sku, pim) in enumerate(list(g_sku_to_pim.items())[:5]):
+                    sample_rows.append({
+                        "Child SKU": sku, "Parent PIM": pim,
+                        "Base RRP": g_rrp_map.get(pim, 0), "Markdown (MD)": g_markdown_map.get(pim, 0),
+                        "Final Campaign Price (D)": g_price_map.get(sku, 0)
+                    })
+                st.dataframe(pd.DataFrame(sample_rows), use_container_width=True)
+
+            excl_idx, rrp_idx, srp_idx, launch_idx = 2, 1, 2, 0 # Structural fallbacks
         else:
             cfg = REGION_CONFIG[region]
             opts = col_options(zecom_df)
@@ -661,12 +662,12 @@ def main():
                 launch_idx = opts.index(launch_sel)
                 st.caption(f"Sample: `{sample_vals(zecom_df, launch_idx)}`")
 
-        apply_launch_filter = st.checkbox("🚫 Reject unlaunched products (recommended safely checking dates)", value=True)
+        apply_launch_filter = st.checkbox("🚫 Reject unlaunched products (safely verify current date parameters)", value=True)
 
         # ── ④ MULTI-VOUCHER CONFIGURATION GRID ──
         st.markdown("---")
         st.subheader("④ Distribution Run Strategy Matrix")
-        unique_remarks = get_unique_remarks(zecom_df, excl_idx) if not gscript_price_map else ["Promotion Price Rule Active"]
+        unique_remarks = get_unique_remarks(zecom_df, excl_idx) if not g_price_map else ["Promotion Price Rule Active"]
         voucher_type = st.radio("Run Target Allocation Type Strategy Profile", ["Regular VC", "Bundle Discount"], horizontal=True)
 
         if "voucher_row_ids" not in st.session_state: st.session_state.voucher_row_ids = [0]
@@ -681,7 +682,7 @@ def main():
                 pct_clean = pct_raw.strip().replace("%", "")
                 pct_val = int(pct_clean) if pct_clean.isdigit() else None
             with rcol2:
-                selected = st.multiselect("Allowed Eligibility Rules Contexts Dropdown Selection", options=unique_remarks, default=unique_remarks if gscript_price_map else [], key=f"vc_remarks_{rid}")
+                selected = st.multiselect("Allowed Eligibility Rules Contexts Dropdown Selection", options=unique_remarks, default=unique_remarks if g_price_map else [], key=f"vc_remarks_{rid}")
                 include_nr = st.checkbox("Accept blank / unassigned fields directly as promotion ready", value=False, key=f"vc_nr_{rid}")
             with rcol3:
                 st.markdown("&nbsp;")
@@ -717,27 +718,27 @@ def main():
         st.info(f"Validation Dependencies Awaiting Input Injection: **{', '.join(missing)}**")
     else:
         if st.button("🚀 Process & Generate Dynamic Market Target Distributions", type="primary"):
-            _run(zecom_file, content_file, inv_file, mp_file, region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx, apply_launch_filter, special_articles, voucher_type, voucher_configs)
+            _run(zecom_file, content_file, inv_file, mp_file, region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx, apply_launch_filter, voucher_type, voucher_configs)
 
     render_results()
 
 
 # ─────────────────────────────────────────────────────────────────
-# DATA PROCESSING PIPELINE execution ENGINE
+# DATA PROCESSING PIPELINE EXECUTION ENGINE
 # ─────────────────────────────────────────────────────────────────
 
 def _run(zecom_file, content_file, inv_file, mp_file,
          region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx, apply_launch_filter,
-         special_articles, voucher_type, voucher_configs):
+         voucher_type, voucher_configs):
 
     with st.status("Initializing algorithmic mapping transforms...", expanded=True) as status:
         file_bytes = zecom_file.getvalue()
-        g_price_map, g_sku_to_pim, g_rrp_map = parse_gscript_sku_map(file_bytes)
+        g_price_map, g_sku_to_pim, g_rrp_map, g_markdown_map = parse_gscript_sku_map(file_bytes)
         
         zecom_df = read_zecom(file_bytes, region)
         column_labels = {
-            "Campaign Exclusions": f"{zecom_df.columns[excl_idx]}" if excl_idx < len(zecom_df.columns) else "Structural Vector",
-            "Mapped Base Reference RRP": f"{zecom_df.columns[rrp_idx]}" if rrp_idx < len(zecom_df.columns) else "Structural Vector"
+            "Campaign System Profiling": "G-Script Mode Active" if g_price_map else "Standard Tab Mode",
+            "Target Engine Configuration Price Floor": f"{REGION_CONFIG[region]['threshold']}"
         }
 
         content_df = pd.read_excel(io.BytesIO(content_file.getvalue()), sheet_name="content")[["Color_No", "EAN"]].dropna()
@@ -751,13 +752,45 @@ def _run(zecom_file, content_file, inv_file, mp_file,
             pct = row["pct"]
             
             if g_price_map:
-                # Execution if Apps Script Data Core Structure is found
+                # 🛠️ CAMPAIGN ENGINE STRATEGY PIPELINE INJECTION
+                # Dynamically maps calculations out of the custom G-Script data blocks.
+                sku_keys = list(g_price_map.keys())
+                calculated_srp = list(g_price_map.values())
+                
+                cfg = REGION_CONFIG[region]
+                threshold = cfg["threshold"]
+                
+                # Formulate structural rule calculations using in-memory arrays
+                statuses = []
+                reasons = []
+                
+                for s_key in sku_keys:
+                    p_id = g_sku_to_pim.get(s_key)
+                    base_rrp = g_rrp_map.get(p_id, 0)
+                    final_srp = g_price_map.get(s_key, 0)
+                    
+                    # Direct price-floor comparison checks mapped from the regional definitions
+                    price_ok = (base_rrp > threshold) and (final_srp >= threshold)
+                    
+                    if not price_ok:
+                        statuses.append("ineligible")
+                        reasons.append("Price below threshold (RRP/SRP Markdown Fail)")
+                    else:
+                        statuses.append("eligible")
+                        reasons.append("")
+
                 art = pd.DataFrame({
-                    "article": list(g_price_map.keys()), "mp_status": "YES", "rrp": [g_rrp_map.get(p, 0) for p in g_sku_to_pim.values()],
-                    "srp": list(g_price_map.values()), "remark": "Promotion Price Rule Active", "launch_date": "01-01-2025", "status": "eligible", "reason": ""
+                    "article": sku_keys, 
+                    "mp_status": "YES", 
+                    "rrp": [g_rrp_map.get(g_sku_to_pim.get(k), 0) for k in sku_keys],
+                    "srp": calculated_srp, 
+                    "remark": "Promotion Price Rule Active", 
+                    "launch_date": "01-01-2025", 
+                    "status": statuses, 
+                    "reason": reasons
                 })
             else:
-                art = process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx, row["remarks"], row["include_no_remark"], special_articles, apply_launch_filter)
+                art = process_zecom(zecom_df, region, marketplace, excl_idx, rrp_idx, srp_idx, launch_idx, row["remarks"], row["include_no_remark"], set(), apply_launch_filter)
 
             ean_df = map_to_eans(art, content_df, inv_df)
             n_ok = len(eligible_ean_set(ean_df))
@@ -802,8 +835,7 @@ def render_results():
 
     st.markdown("---")
     hcol1, hcol2 = st.columns([5, 1])
-    with hcol1:
-        st.subheader("⑥ Export Structured Outputs")
+    with hcol1: st.subheader("⑥ Export Structured Outputs")
     with hcol2:
         if st.button("🧹 Clear Output Matrices"):
             del st.session_state["last_run"]
