@@ -19,13 +19,13 @@ def normalize_sku(sku):
 
 def clean_id_str(val):
     if pd.isna(val):
-        return None
+        return ""
     if isinstance(val, float):
         return str(int(val)) if val.is_integer() else str(val)
     s = str(val).strip()
     if re.match(r"^-?\d+\.0+$", s):
         s = s.split(".")[0]
-    return s
+    return s if s != "nan" else ""
 
 def get_clean_headers_and_df(uploaded_file):
     try:
@@ -182,25 +182,23 @@ with col2:
                 st.error(f"Could not parse Lazada layout: {e}")
 
     # --- ZALORA SECTION ---
-    zalora_template_file = None
-    zalora_upload_file = None
+    zalora_file = None
     zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
-        zalora_template_file = st.file_uploader("5a. Upload Zalora REFERENCE Template File (.xlsx)", type=["xlsx"], key="zal_temp")
-        zalora_upload_file = st.file_uploader("5b. Upload Zalora TARGET Upload File (.xlsx)", type=["xlsx"], key="zal_upl")
+        zalora_file = st.file_uploader("5. Upload Master Zalora Price Template (.xlsx)", type=["xlsx"], key="zal_master")
         
-        if zalora_upload_file:
+        if zalora_file:
             try:
-                zalora_headers = list(read_full_file_standard(zalora_upload_file).columns)
+                zalora_headers = list(read_full_file_standard(zalora_file).columns)
                 zalora_sku = st.selectbox("Map Zalora SKU Column (e.g. SellerSku)", [""] + zalora_headers, key="zal_sku")
                 zalora_promo = st.selectbox("Map Zalora Sale Price Column (e.g. SalePrice)", [""] + zalora_headers, key="zal_promo")
                 zalora_orig = st.selectbox("Map Zalora RRP Price Column (e.g. Price)", [""] + zalora_headers, key="zal_orig")
                 zalora_start = st.selectbox("Map Zalora Sale Start Date Column (e.g. SaleStartDate)", [""] + zalora_headers, key="zal_start")
                 zalora_end = st.selectbox("Map Zalora Sale End Date Column (e.g. SaleEndDate)", [""] + zalora_headers, key="zal_end")
                 
-                st.caption("🗓️ **Set Manual Zalora Campaign Windows**")
+                st.caption("🗓️ **Set Manual Campaign Run Windows**")
                 zal_dates_col1, zal_dates_col2 = st.columns(2)
                 with zal_dates_col1:
                     zal_d1 = st.date_input("Zalora Start Date", datetime(2026, 7, 9))
@@ -228,7 +226,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Shopee engine selected, but tracking dimensions are unassigned."); error_found = True
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"] and (not lazada_file or not lazada_sku or not lazada_price):
         st.error("❌ Lazada engine selected, but data columns remain unassigned."); error_found = True
-    if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_template_file or not zalora_upload_file or not zalora_sku or not zalora_promo or not zalora_orig or not zalora_start or not zalora_end):
+    if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_file or not zalora_sku or not zalora_promo or not zalora_orig or not zalora_start or not zalora_end):
         st.error("❌ Zalora engine selected, but columns remain unassigned."); error_found = True
 
     if not error_found:
@@ -264,7 +262,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # Dashboard Fallback sheet to ensure safety
+                    # Core Fallback Dashboard Tab
                     pd.DataFrame([{
                         "Run Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "Automation Mode Selection": mode,
@@ -335,104 +333,104 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_lazada.at[idx, lazada_price] = new_price
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # 5. Process Zalora Channel Data
-                    if zalora_template_file and zalora_upload_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
-                        df_zalora_temp = read_full_file_standard(zalora_template_file)
-                        df_zalora_upl = read_full_file_standard(zalora_upload_file)
+                    # 5. Process Zalora Channel Data (Exact Three-Sheet Tab Blueprint)
+                    if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
+                        df_zalora_raw = read_full_file_standard(zalora_file)
                         
-                        temp_sku_col = _find_col(df_zalora_temp, ["sku", "item", "sellersku"]) or df_zalora_temp.columns[0]
-                        temp_rrp_col = _find_col(df_zalora_temp, ["price", "rrp", "original"]) or df_zalora_temp.columns[1]
-                        temp_srp_col = _find_col(df_zalora_temp, ["saleprice", "srp", "sale"]) or df_zalora_temp.columns[2]
+                        # Sheet 1: Save exact copy of raw state matching 'Direct Download From Zalora'
+                        df_zalora_raw.to_excel(writer, sheet_name="Direct Download From Zalora", index=False)
                         
-                        temp_data = {}
-                        for _, r in df_zalora_temp.iterrows():
-                            tsku = normalize_sku(r[temp_sku_col])
-                            if tsku:
-                                temp_data[tsku] = {
-                                    "rrp": pd.to_numeric(r[temp_rrp_col], errors='coerce'),
-                                    "srp": pd.to_numeric(r[temp_srp_col], errors='coerce')
-                                }
-                        
-                        enriched_temp = df_zalora_temp.copy()
-                        enriched_temp["ALU_NO"] = enriched_temp[temp_sku_col].apply(clean_id_str)
-                        enriched_temp["Current RRP"] = ""
-                        enriched_temp["RRP Check"] = ""
-                        enriched_temp["Current SRP"] = ""
-                        enriched_temp["SRP Check"] = ""
-                        enriched_temp["Comments"] = ""
-                        
-                        final_upload_rows = []
-                        invalid_skus = []
-                        
-                        # Crucial Fix: Force the destination cells to object/str datatype 
-                        # to eliminate datatype conflicts inside openpyxl entirely
-                        df_zalora_upl = df_zalora_upl.astype({
+                        # Prepare functional data modifications tracking variables
+                        df_working_flow = df_zalora_raw.copy()
+                        df_working_flow = df_working_flow.astype({
                             zalora_orig: object, zalora_promo: object,
                             zalora_start: object, zalora_end: object
                         })
                         
-                        for idx, row in df_zalora_upl.iterrows():
+                        # Append the requested auditing evaluation columns structural block
+                        df_working_flow["ALU_NO/Color_No"] = ""
+                        df_working_flow["RRP/PH EC RRP"] = ""
+                        df_working_flow["RRP check (I=D)"] = ""
+                        df_working_flow["SRP/PH MD Price"] = ""
+                        df_working_flow["SRP check (K=E)"] = ""
+                        df_working_flow["Comments"] = ""
+                        
+                        final_to_upload_rows = []
+                        
+                        for idx, row in df_zalora_raw.iterrows():
                             sku = row[zalora_sku]
                             norm_sku = normalize_sku(sku)
                             pim = sku_to_pim.get(norm_sku)
-                            t_info = temp_data.get(norm_sku)
                             
-                            if not pim or norm_sku not in price_map or not t_info or pd.isna(pim):
-                                invalid_skus.append({
-                                    "Input SKU": sku,
-                                    "Normalized SKU": norm_sku,
-                                    "Reason for Removal": "Missing mapping match linking Seller SKU to PIM ID in your files (#N/A)"
-                                })
+                            # Rule 4: Omit completely if item returns #N/A mappings
+                            if not pim or norm_sku not in price_map or pd.isna(pim):
+                                df_working_flow.at[idx, "Comments"] = "Removed record: Missing mapping entry (#N/A dropout)"
                                 continue
                                 
                             tracker_rrp_val = rrp_map.get(pim, 0)
                             tracker_srp_val = price_map.get(norm_sku, 0)
-                            upload_rrp = pd.to_numeric(row[zalora_orig], errors='coerce') or 0
-                            upload_srp = pd.to_numeric(row[zalora_promo], errors='coerce') or 0
                             
-                            rrp_check = (t_info["rrp"] == upload_rrp)
-                            srp_check = (t_info["srp"] == upload_srp)
+                            current_rrp = pd.to_numeric(row[zalora_orig], errors='coerce') or 0
+                            current_srp = pd.to_numeric(row[zalora_promo], errors='coerce') or 0
                             
+                            rrp_match = (tracker_rrp_val == current_rrp)
+                            srp_match = (tracker_srp_val == current_srp)
+                            
+                            # Fill data columns back into Working Flow audits sheet
+                            df_working_flow.at[idx, "ALU_NO/Color_No"] = str(pim)
+                            df_working_flow.at[idx, "RRP/PH EC RRP"] = str(tracker_rrp_val)
+                            df_working_flow.at[idx, "RRP check (I=D)"] = str(rrp_match)
+                            df_working_flow.at[idx, "SRP/PH MD Price"] = str(tracker_srp_val)
+                            df_working_flow.at[idx, "SRP check (K=E)"] = str(srp_match)
+                            
+                            # Rule 3: Clear sale dimensions if value drops to 0
                             if tracker_srp_val == 0:
-                                df_zalora_upl.at[idx, zalora_promo] = ""
-                                df_zalora_upl.at[idx, zalora_start] = ""
-                                df_zalora_upl.at[idx, zalora_end] = ""
-                                final_upload_rows.append(df_zalora_upl.iloc[idx])
+                                df_working_flow.at[idx, zalora_promo] = ""
+                                df_working_flow.at[idx, zalora_start] = ""
+                                df_working_flow.at[idx, zalora_end] = ""
+                                df_working_flow.at[idx, "Comments"] = "Remove Sale: Tracker SRP is evaluated at 0."
+                                
+                                upload_row = df_working_flow.iloc[idx].copy()
+                                final_to_upload_rows.append(upload_row)
                                 continue
                                 
-                            if rrp_check and srp_check:
+                            # Rule 1: Handle matches / enforce calendar baseline rules
+                            if rrp_match and srp_match:
+                                df_working_flow.at[idx, "Comments"] = "All Good – Both RRP and SRP Match the Tracker Prices."
                                 current_end_dt = row[zalora_end]
                                 try:
                                     parsed_end = pd.to_datetime(current_end_dt)
                                     if parsed_end < datetime.now() + timedelta(days=30):
-                                        df_zalora_upl.at[idx, zalora_start] = str(zalora_start_str)
-                                        df_zalora_upl.at[idx, zalora_end] = str(zalora_end_str)
+                                        df_working_flow.at[idx, zalora_start] = str(zalora_start_str)
+                                        df_working_flow.at[idx, zalora_end] = str(zalora_end_str)
+                                        df_working_flow.at[idx, "Comments"] += " Extended short campaign window."
                                 except:
-                                    df_zalora_upl.at[idx, zalora_start] = str(zalora_start_str)
-                                    df_zalora_upl.at[idx, zalora_end] = str(zalora_end_str)
+                                    df_working_flow.at[idx, zalora_start] = str(zalora_start_str)
+                                    df_working_flow.at[idx, zalora_end] = str(zalora_end_str)
+                            
+                            # Rules 2 & 5: Implement changes where differences appear
                             else:
-                                df_zalora_upl.at[idx, zalora_orig] = str(tracker_rrp_val)
-                                df_zalora_upl.at[idx, zalora_promo] = str(tracker_srp_val)
-                                df_zalora_upl.at[idx, zalora_start] = str(zalora_start_str)
-                                df_zalora_upl.at[idx, zalora_end] = str(zalora_end_str)
+                                df_working_flow.at[idx, zalora_orig] = str(tracker_rrp_val)
+                                df_working_flow.at[idx, zalora_promo] = str(tracker_srp_val)
+                                df_working_flow.at[idx, zalora_start] = str(zalora_start_str)
+                                df_working_flow.at[idx, zalora_end] = str(zalora_end_str)
+                                df_working_flow.at[idx, "Comments"] = "Price updated to match tracker metrics."
                                 
-                            final_upload_rows.append(df_zalora_upl.iloc[idx])
+                            upload_row = df_working_flow.iloc[idx].copy()
+                            final_to_upload_rows.append(upload_row)
                         
-                        for t_idx, t_row in enriched_temp.iterrows():
-                            t_sku_val = normalize_sku(t_row[temp_sku_col])
-                            t_pim = sku_to_pim.get(t_sku_val)
-                            if t_pim:
-                                enriched_temp.at[t_idx, "Current RRP"] = str(rrp_map.get(t_pim, ""))
-                                enriched_temp.at[t_idx, "Current SRP"] = str(price_map.get(t_sku_val, ""))
+                        # Save structural Sheet 2: 'Working Flow'
+                        df_working_flow.to_excel(writer, sheet_name="Working Flow", index=False)
                         
-                        enriched_temp.to_excel(writer, sheet_name="Zalora_Template_Enriched", index=False)
-                        
-                        if final_upload_rows:
-                            df_zalora_final = pd.DataFrame(final_upload_rows)
-                            df_zalora_final.to_excel(writer, sheet_name="Zalora_Final_Upload", index=False)
-                        
-                        df_errors = pd.DataFrame(invalid_skus) if invalid_skus else pd.DataFrame([{"Message": "No records were dropped."}])
-                        df_errors.to_excel(writer, sheet_name="Zalora_Errors", index=False)
+                        # Save structural Sheet 3: 'To Upload'
+                        if final_to_upload_rows:
+                            df_to_upload = pd.DataFrame(final_to_upload_rows)
+                            # Strip evaluating audit lookup arrays out from clean upload template payload columns grid
+                            cols_to_drop = ["ALU_NO/Color_No", "RRP/PH EC RRP", "RRP check (I=D)", "SRP/PH MD Price", "SRP check (K=E)", "Comments"]
+                            df_to_upload = df_to_upload.drop(columns=cols_to_drop, errors='ignore')
+                            df_to_upload.to_excel(writer, sheet_name="To Upload", index=False)
+                        else:
+                            pd.DataFrame([{"Message": "All validation records returned #N/A mapping constraints."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
                 st.success("🎉 Automation executed successfully!")
