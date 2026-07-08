@@ -190,15 +190,18 @@ with col2:
 
     # Zalora Upload block
     zalora_file = None
-    zalora_sku, zalora_price = None, None
+    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
         zalora_file = st.file_uploader("5. Upload Zalora Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
         if zalora_file:
             try:
                 zalora_headers = list(read_full_file_standard(zalora_file).columns)
-                zalora_sku = st.selectbox("Map Zalora SKU / Item Column", [""] + zalora_headers, key="zal_sku")
-                zalora_price = st.selectbox("Map Zalora Target Price Column", [""] + zalora_headers, key="zal_price")
+                zalora_sku = st.selectbox("Map Zalora SKU Column", [""] + zalora_headers, key="zal_sku")
+                zalora_promo = st.selectbox("Map Zalora Promotion/Discount Price Column", [""] + zalora_headers, key="zal_promo")
+                zalora_orig = st.selectbox("Map Zalora Original Price Column", [""] + zalora_headers, key="zal_orig")
+                zalora_start = st.selectbox("Map Zalora Start Date (Optional)", [""] + zalora_headers, key="zal_start")
+                zalora_end = st.selectbox("Map Zalora End Date (Optional)", [""] + zalora_headers, key="zal_end")
             except Exception as e:
                 st.error(f"Could not parse Zalora layout: {e}")
 
@@ -219,8 +222,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Shopee engine selected, but tracking dimensions are unassigned."); error_found = True
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"] and (not lazada_file or not lazada_sku or not lazada_price):
         st.error("❌ Lazada engine selected, but data columns remain unassigned."); error_found = True
-    if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_file or not zalora_sku or not zalora_price):
-        st.error("❌ Zalora engine selected, but data columns remain unassigned."); error_found = True
+    if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_file or not zalora_sku or not zalora_promo or not zalora_orig):
+        st.error("❌ Zalora engine selected, but tracking dimensions are unassigned."); error_found = True
 
     if not error_found:
         with st.spinner("Executing system pipeline mappings..."):
@@ -317,16 +320,57 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # 5. Process Zalora Channel Data
+                    # 5. Process Zalora Channel Data with full QC Validation Pipeline
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         df_zalora = read_full_file_standard(zalora_file)
-                        for idx, row in df_zalora.iterrows():
-                            norm_sku = normalize_sku(row[zalora_sku])
-                            existing_price = row[zalora_price]
-                            new_price = price_map.get(norm_sku, existing_price)
-                            df_zalora.at[idx, zalora_price] = new_price
+                        mismatch_rows_zal = []
+                        upload_rows_zal = []
                         
-                        df_zalora.to_excel(writer, sheet_name="Zalora_Upload", index=False)
+                        df_zalora['QC Comment'] = ""
+                        
+                        for idx, row in df_zalora.iterrows():
+                            sku = row[zalora_sku]
+                            norm_sku = normalize_sku(sku)
+                            existing_promo = row[zalora_promo]
+                            orig_price = pd.to_numeric(row[zalora_orig], errors='coerce')
+                            
+                            new_price = price_map.get(norm_sku, existing_promo)
+                            pim = sku_to_pim.get(norm_sku)
+                            rrp = rrp_map.get(pim)
+                            
+                            comment = ""
+                            is_mismatch = False
+                            
+                            if rrp is not None and orig_price != rrp:
+                                comment = "RRP Mismatch"
+                                is_mismatch = True
+                                mismatch_rows_zal.append({
+                                    "Seller SKU": sku, "Marketplace Status": "Active", "Marketplace Message": "RRP Mismatch",
+                                    "RRP": rrp, "Sale Amount": new_price, 
+                                    "Sale Start Date(SGT)": row.get(zalora_start, '') if zalora_start else '', 
+                                    "Sale End Date(SGT)": row.get(zalora_end, '') if zalora_end else ''
+                                })
+                            elif pd.isna(new_price) or new_price == "":
+                                comment = "Discount Price is Blank"
+                            elif rrp is not None and rrp == new_price:
+                                comment = "Remove: RRP = Discount"
+                            
+                            df_zalora.at[idx, zalora_promo] = new_price
+                            df_zalora.at[idx, 'QC Comment'] = comment
+                            
+                            if not is_mismatch and not (pd.isna(new_price) or new_price == "") and not (rrp is not None and rrp == new_price):
+                                upload_row = row.copy()
+                                upload_row[zalora_promo] = new_price
+                                upload_rows_zal.append(upload_row)
+
+                        df_zalora.to_excel(writer, sheet_name="Zalora_Master_Updated", index=False)
+                        
+                        df_mismatch_zal = pd.DataFrame(mismatch_rows_zal) if mismatch_rows_zal else pd.DataFrame([{"Message": "No RRP Mismatches Found"}])
+                        df_mismatch_zal.to_excel(writer, sheet_name="Zalora_RRP_Mismatches", index=False)
+                        
+                        if upload_rows_zal:
+                            df_upload_zal = pd.DataFrame(upload_rows_zal).drop(columns=['QC Comment'], errors='ignore')
+                            df_upload_zal.to_excel(writer, sheet_name="Zalora_Upload", index=False)
 
                 output_buffer.seek(0)
                 
