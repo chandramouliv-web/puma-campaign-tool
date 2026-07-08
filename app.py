@@ -256,7 +256,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         sku_to_pim[norm_sku] = pim
 
                 output_buffer = io.BytesIO()
-                sheets_written = 0  # Safety counter tracking to safeguard writer engine from empty crashes
+                sheets_written = 0
                 
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
@@ -353,6 +353,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         enriched_temp["Comments"] = ""
                         
                         final_upload_rows = []
+                        invalid_skus = []  # Tracking error logs to pinpoint validation dropouts
                         
                         for idx, row in df_zalora_upl.iterrows():
                             sku = row[zalora_sku]
@@ -360,7 +361,14 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pim = sku_to_pim.get(norm_sku)
                             t_info = temp_data.get(norm_sku)
                             
+                            # Rule 4 Diagnostics check
                             if not pim or norm_sku not in price_map or not t_info or pd.isna(pim):
+                                invalid_skus.append({
+                                    "Row Index": idx + 4,
+                                    "Input SKU": sku,
+                                    "Normalized SKU": norm_sku,
+                                    "Reason for Removal": "Missing from SKU_Map or Master Tracker mapping framework (#N/A)"
+                                })
                                 continue
                                 
                             tracker_rrp_val = rrp_map.get(pim, 0)
@@ -404,14 +412,18 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 enriched_temp.at[t_idx, "Current SRP"] = price_map.get(t_sku_val, "")
                         
                         enriched_temp.to_excel(writer, sheet_name="Zalora_Template_Enriched", index=False)
+                        sheets_written += 1
+                        
                         if final_upload_rows:
                             df_zalora_final = pd.DataFrame(final_upload_rows)
                             df_zalora_final.to_excel(writer, sheet_name="Zalora_Final_Upload", index=False)
-                        else:
-                            pd.DataFrame([{"Message": "All validation files omitted or parsed blank."}]).to_excel(writer, sheet_name="Zalora_Final_Upload", index=False)
-                        sheets_written += 2
+                            sheets_written += 1
+                        
+                        # Write the error log diagnostic tab
+                        df_errors = pd.DataFrame(invalid_skus) if invalid_skus else pd.DataFrame([{"Message": "No records were dropped. All items mapped successfully!"}])
+                        df_errors.to_excel(writer, sheet_name="Zalora_Errors", index=False)
+                        sheets_written += 1
 
-                    # 🚨 SAFETY METRIC: If execution fall-through yielded 0 sheets, write a dashboard log to avoid crashing openpyxl
                     if sheets_written == 0:
                         pd.DataFrame([{
                             "Execution Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
