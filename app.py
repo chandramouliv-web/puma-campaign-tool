@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import re
 import zipfile
+from datetime import datetime, time
 
 # Set up page configuration
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
@@ -17,10 +18,6 @@ def normalize_sku(sku):
     return str(sku).strip().replace('-', '_').lower()
 
 def clean_id_str(val):
-    """
-    Clean an ID value (Product ID, Shop SKU, etc.) for exact output.
-    Prevents floating-point trailing digits (.0) from leaking into string exports.
-    """
     if pd.isna(val):
         return None
     if isinstance(val, float):
@@ -31,7 +28,6 @@ def clean_id_str(val):
     return s
 
 def _extract_ean(sku_val, parent_val):
-    """Safely extracts a 13-digit EAN from layout configurations."""
     for v in (sku_val, parent_val):
         if pd.notna(v):
             try:
@@ -43,10 +39,6 @@ def _extract_ean(sku_val, parent_val):
     return None
 
 def get_clean_headers_and_df(uploaded_file):
-    """
-    Reads Row 3 directly as clean column names and maps them 
-    with their Excel column letters to avoid duplicate name confusion.
-    """
     try:
         uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
@@ -54,7 +46,6 @@ def get_clean_headers_and_df(uploaded_file):
         else:
             full_df = pd.read_excel(uploaded_file, header=None)
 
-        # Extract row 3 (Index 2) as target header strings
         row3_names = full_df.iloc[2].fillna("").astype(str).tolist()
 
         def get_excel_col_letter(n):
@@ -68,39 +59,30 @@ def get_clean_headers_and_df(uploaded_file):
         for index, name in enumerate(row3_names):
             clean_name = name.strip()
             col_letter = get_excel_col_letter(index + 1)
-            
             if not clean_name or "Unnamed:" in clean_name or clean_name == "nan":
                 clean_name = "Blank Column"
-                
             clean_headers.append(f"[{col_letter}] {clean_name}")
 
         full_df.columns = clean_headers
         full_df = full_df.iloc[3:].reset_index(drop=True)
-        
         return clean_headers, full_df
     except Exception as e:
         st.error(f"Error processing layout headers from {uploaded_file.name}: {e}")
         return [], None
 
 def read_full_file_standard(uploaded_file):
-    """Standard single-row header reader for SKU Maps or Excel Templates."""
     uploaded_file.seek(0)
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file)
     return pd.read_excel(uploaded_file)
 
 def _read_shopee_zip(uploaded_file):
-    """
-    Unpacks an uploaded Shopee ZIP stream containing multiple standard 
-    export tables using the optimized calamine engine.
-    """
     dfs = []
     file_bytes = uploaded_file.read()
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
         names = sorted(n for n in zf.namelist() if n.endswith(".xlsx"))
         if not names:
             raise ValueError("No active .xlsx data files located inside the uploaded ZIP bundle.")
-            
         bar = st.progress(0, text="Reading Shopee export files…")
         for i, name in enumerate(names):
             with zf.open(name) as f:
@@ -126,8 +108,6 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("📋 Core Data Settings")
-    
-    # Tracker Upload Container
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
@@ -142,7 +122,6 @@ with col1:
 
     st.markdown("---")
 
-    # SKU Map Upload Container
     sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
     sku_sku, sku_pim = None, None
     if sku_file:
@@ -156,9 +135,10 @@ with col1:
 with col2:
     st.subheader("🛍 Marketplace Templates")
     
-    # Shopee ZIP Upload block
+    # --- SHOPEE SECTION ---
     shopee_file = None
     shopee_sku, shopee_promo, shopee_orig, shopee_start, shopee_end = None, None, None, None, None
+    shopee_start_str, shopee_end_str = "", ""
     if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
         shopee_file = st.file_uploader("3. Upload Shopee Master Template (.zip)", type=["zip"])
         if shopee_file:
@@ -169,12 +149,24 @@ with col2:
                 shopee_sku = st.selectbox("Map Shopee SKU Column", [""] + shopee_headers, key="sh_sku")
                 shopee_promo = st.selectbox("Map Shopee Promotion/Discount Price Column", [""] + shopee_headers, key="sh_promo")
                 shopee_orig = st.selectbox("Map Shopee Original Price Column", [""] + shopee_headers, key="sh_orig")
-                shopee_start = st.selectbox("Map Shopee Start Date (Optional)", [""] + shopee_headers, key="sh_start")
-                shopee_end = st.selectbox("Map Shopee End Date (Optional)", [""] + shopee_headers, key="sh_end")
+                shopee_start = st.selectbox("Map Shopee Start Date Column (Optional)", [""] + shopee_headers, key="sh_start")
+                shopee_end = st.selectbox("Map Shopee End Date Column (Optional)", [""] + shopee_headers, key="sh_end")
+                
+                if shopee_start or shopee_end:
+                    st.caption("🗓️ **Set Shopee Campaign Run Windows**")
+                    dates_col1, dates_col2 = st.columns(2)
+                    with dates_col1:
+                        sh_d1 = st.date_input("Shopee Start Date", datetime(2026, 7, 9))
+                        sh_t1 = st.time_input("Shopee Start Time", time(23, 30, 0))
+                        shopee_start_str = f"{sh_d1} {sh_t1.strftime('%H:%M:%S')}"
+                    with dates_col2:
+                        sh_d2 = st.date_input("Shopee End Date", datetime(2026, 8, 31))
+                        sh_t2 = st.time_input("Shopee End Time", time(23, 59, 59))
+                        shopee_end_str = f"{sh_d2} {sh_t2.strftime('%H:%M:%S')}"
             except Exception as e:
                 st.error(f"Could not open or parse Shopee ZIP package stream: {e}")
 
-    # Lazada Upload block
+    # --- LAZADA SECTION ---
     lazada_file = None
     lazada_sku, lazada_price = None, None
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
@@ -188,9 +180,10 @@ with col2:
             except Exception as e:
                 st.error(f"Could not parse Lazada layout: {e}")
 
-    # Zalora Upload block
+    # --- ZALORA SECTION ---
     zalora_file = None
     zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
+    zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
         zalora_file = st.file_uploader("5. Upload Zalora Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
@@ -200,8 +193,20 @@ with col2:
                 zalora_sku = st.selectbox("Map Zalora SKU Column", [""] + zalora_headers, key="zal_sku")
                 zalora_promo = st.selectbox("Map Zalora Promotion/Discount Price Column", [""] + zalora_headers, key="zal_promo")
                 zalora_orig = st.selectbox("Map Zalora Original Price Column", [""] + zalora_headers, key="zal_orig")
-                zalora_start = st.selectbox("Map Zalora Start Date (Optional)", [""] + zalora_headers, key="zal_start")
-                zalora_end = st.selectbox("Map Zalora End Date (Optional)", [""] + zalora_headers, key="zal_end")
+                zalora_start = st.selectbox("Map Zalora Start Date Column (Optional)", [""] + zalora_headers, key="zal_start")
+                zalora_end = st.selectbox("Map Zalora End Date Column (Optional)", [""] + zalora_headers, key="zal_end")
+                
+                if zalora_start or zalora_end:
+                    st.caption("🗓️ **Set Zalora Campaign Run Windows**")
+                    zal_dates_col1, zal_dates_col2 = st.columns(2)
+                    with zal_dates_col1:
+                        zal_d1 = st.date_input("Zalora Start Date", datetime(2026, 7, 9))
+                        zal_t1 = st.time_input("Zalora Start Time", time(23, 30, 0))
+                        zalora_start_str = f"{zal_d1} {zal_t1.strftime('%H:%M:%S')}"
+                    with zal_dates_col2:
+                        zal_d2 = st.date_input("Zalora End Date", datetime(2026, 8, 31))
+                        zal_t2 = st.time_input("Zalora End Time", time(23, 59, 59))
+                        zalora_end_str = f"{zal_d2} {zal_t2.strftime('%H:%M:%S')}"
             except Exception as e:
                 st.error(f"Could not parse Zalora layout: {e}")
 
@@ -211,8 +216,6 @@ st.markdown("---")
 # ⚙️ PROCESSING EXECUTION CORE
 # ==========================================
 if st.button("🚀 Run Automation Process", type="primary", use_container_width=True):
-    
-    # Form Validation Passports
     error_found = False
     if not tracker_file or not tracker_pim or not tracker_rrp or not tracker_md:
         st.error("❌ Tracker layout mappings are invalid or unassigned."); error_found = True
@@ -257,12 +260,11 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data via unpacked ZIP arrays
+                    # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee = _read_shopee_zip(shopee_file)
                         mismatch_rows = []
                         upload_rows = []
-                        
                         df_shopee['QC Comment'] = ""
                         
                         for idx, row in df_shopee.iterrows():
@@ -284,8 +286,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 mismatch_rows.append({
                                     "Seller SKU": sku, "Marketplace Status": "Active", "Marketplace Message": "RRP Mismatch",
                                     "RRP": rrp, "Sale Amount": new_price, 
-                                    "Sale Start Date(SGT)": row.get(shopee_start, '') if shopee_start else '', 
-                                    "Sale End Date(SGT)": row.get(shopee_end, '') if shopee_end else ''
+                                    "Sale Start Date(SGT)": shopee_start_str if shopee_start else '', 
+                                    "Sale End Date(SGT)": shopee_end_str if shopee_end else ''
                                 })
                             elif pd.isna(new_price) or new_price == "":
                                 comment = "Discount Price is Blank"
@@ -293,15 +295,18 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 comment = "Remove: RRP = Discount"
                             
                             df_shopee.at[idx, shopee_promo] = new_price
+                            if shopee_start: df_shopee.at[idx, shopee_start] = shopee_start_str
+                            if shopee_end: df_shopee.at[idx, shopee_end] = shopee_end_str
                             df_shopee.at[idx, 'QC Comment'] = comment
                             
                             if not is_mismatch and not (pd.isna(new_price) or new_price == "") and not (rrp is not None and rrp == new_price):
                                 upload_row = row.copy()
                                 upload_row[shopee_promo] = new_price
+                                if shopee_start: upload_row[shopee_start] = shopee_start_str
+                                if shopee_end: upload_row[shopee_end] = shopee_end_str
                                 upload_rows.append(upload_row)
 
                         df_shopee.to_excel(writer, sheet_name="Shopee_Master_Updated", index=False)
-                        
                         df_mismatch = pd.DataFrame(mismatch_rows) if mismatch_rows else pd.DataFrame([{"Message": "No RRP Mismatches Found"}])
                         df_mismatch.to_excel(writer, sheet_name="Shopee_RRP_Mismatches", index=False)
                         
@@ -317,15 +322,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             existing_price = row[lazada_price]
                             new_price = price_map.get(norm_sku, existing_price)
                             df_lazada.at[idx, lazada_price] = new_price
-                        
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # 5. Process Zalora Channel Data with full QC Validation Pipeline
+                    # 5. Process Zalora Channel Data
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         df_zalora = read_full_file_standard(zalora_file)
                         mismatch_rows_zal = []
                         upload_rows_zal = []
-                        
                         df_zalora['QC Comment'] = ""
                         
                         for idx, row in df_zalora.iterrows():
@@ -347,8 +350,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 mismatch_rows_zal.append({
                                     "Seller SKU": sku, "Marketplace Status": "Active", "Marketplace Message": "RRP Mismatch",
                                     "RRP": rrp, "Sale Amount": new_price, 
-                                    "Sale Start Date(SGT)": row.get(zalora_start, '') if zalora_start else '', 
-                                    "Sale End Date(SGT)": row.get(zalora_end, '') if zalora_end else ''
+                                    "Sale Start Date(SGT)": zalora_start_str if zalora_start else '', 
+                                    "Sale End Date(SGT)": zalora_end_str if zalora_end else ''
                                 })
                             elif pd.isna(new_price) or new_price == "":
                                 comment = "Discount Price is Blank"
@@ -356,15 +359,18 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 comment = "Remove: RRP = Discount"
                             
                             df_zalora.at[idx, zalora_promo] = new_price
+                            if zalora_start: df_zalora.at[idx, zalora_start] = zalora_start_str
+                            if zalora_end: df_zalora.at[idx, zalora_end] = zalora_end_str
                             df_zalora.at[idx, 'QC Comment'] = comment
                             
                             if not is_mismatch and not (pd.isna(new_price) or new_price == "") and not (rrp is not None and rrp == new_price):
                                 upload_row = row.copy()
                                 upload_row[zalora_promo] = new_price
+                                if zalora_start: upload_row[zalora_start] = zalora_start_str
+                                if zalora_end: upload_row[zalora_end] = zalora_end_str
                                 upload_rows_zal.append(upload_row)
 
                         df_zalora.to_excel(writer, sheet_name="Zalora_Master_Updated", index=False)
-                        
                         df_mismatch_zal = pd.DataFrame(mismatch_rows_zal) if mismatch_rows_zal else pd.DataFrame([{"Message": "No RRP Mismatches Found"}])
                         df_mismatch_zal.to_excel(writer, sheet_name="Zalora_RRP_Mismatches", index=False)
                         
@@ -373,7 +379,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_upload_zal.to_excel(writer, sheet_name="Zalora_Upload", index=False)
 
                 output_buffer.seek(0)
-                
                 st.success("🎉 Automation executed successfully!")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
