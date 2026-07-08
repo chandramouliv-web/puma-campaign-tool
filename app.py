@@ -1,14 +1,46 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
+import zipfile
 
 # Set up page configuration
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
+
+# =================================================================
+# ⚙️ HELPER FUNCTIONS & CLEANING PLUGINS
+# =================================================================
 
 def normalize_sku(sku):
     if pd.isna(sku) or not sku:
         return ""
     return str(sku).strip().replace('-', '_').lower()
+
+def clean_id_str(val):
+    """
+    Clean an ID value (Product ID, Shop SKU, etc.) for exact output.
+    Prevents floating-point trailing digits (.0) from leaking into string exports.
+    """
+    if pd.isna(val):
+        return None
+    if isinstance(val, float):
+        return str(int(val)) if val.is_integer() else str(val)
+    s = str(val).strip()
+    if re.match(r"^-?\d+\.0+$", s):
+        s = s.split(".")[0]
+    return s
+
+def _extract_ean(sku_val, parent_val):
+    """Safely extracts a 13-digit EAN from layout configurations."""
+    for v in (sku_val, parent_val):
+        if pd.notna(v):
+            try:
+                s = str(int(float(v)))
+                if re.match(r"^\d{13}$", s): return s
+            except (ValueError, TypeError):
+                s = str(v).strip()
+                if re.match(r"^\d{13}$", s): return s
+    return None
 
 def get_clean_headers_and_df(uploaded_file):
     """
@@ -16,17 +48,15 @@ def get_clean_headers_and_df(uploaded_file):
     with their Excel column letters to avoid duplicate name confusion.
     """
     try:
-        # Read the file without structural headers initially
         uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
             full_df = pd.read_csv(uploaded_file, header=None)
         else:
             full_df = pd.read_excel(uploaded_file, header=None)
 
-        # Extract row 3 (Index 2) as your target header names
+        # Extract row 3 (Index 2) as target header strings
         row3_names = full_df.iloc[2].fillna("").astype(str).tolist()
 
-        # Helper function to generate classic Excel column letters (A, B, C... Z, AA, AB...)
         def get_excel_col_letter(n):
             result = ""
             while n > 0:
@@ -34,43 +64,58 @@ def get_clean_headers_and_df(uploaded_file):
                 result = chr(65 + remainder) + result
             return result
 
-        # Map row names cleanly along with their real physical spreadsheet location
         clean_headers = []
         for index, name in enumerate(row3_names):
             clean_name = name.strip()
             col_letter = get_excel_col_letter(index + 1)
             
-            # Remove default pandas naming artifacts if the cell is empty
             if not clean_name or "Unnamed:" in clean_name or clean_name == "nan":
                 clean_name = "Blank Column"
                 
-            # Formats beautifully as: "[Column DM] PH MD Price" or "[Column DN] DISCOUNT %"
             clean_headers.append(f"[{col_letter}] {clean_name}")
 
-        # Assign the calculated single names to the DataFrame and crop out the structural top 3 layout rows
         full_df.columns = clean_headers
         full_df = full_df.iloc[3:].reset_index(drop=True)
         
         return clean_headers, full_df
-
     except Exception as e:
         st.error(f"Error processing layout headers from {uploaded_file.name}: {e}")
         return [], None
 
 def read_full_file_standard(uploaded_file):
-    """Standard file reader for simple single-row header sheets like SKU map."""
+    """Standard single-row header reader for SKU Maps or Excel Templates."""
     uploaded_file.seek(0)
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file)
     return pd.read_excel(uploaded_file)
 
+def _read_shopee_zip(uploaded_file):
+    """
+    Unpacks an uploaded Shopee ZIP stream containing multiple standard 
+    export tables using the optimized calamine engine.
+    """
+    dfs = []
+    file_bytes = uploaded_file.read()
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+        names = sorted(n for n in zf.namelist() if n.endswith(".xlsx"))
+        if not names:
+            raise ValueError("No active .xlsx data files located inside the uploaded ZIP bundle.")
+            
+        bar = st.progress(0, text="Reading Shopee export files…")
+        for i, name in enumerate(names):
+            with zf.open(name) as f:
+                # Matches your structural header requirements (header=2, skips raw tracking lines)
+                dfs.append(pd.read_excel(f, engine="calamine", header=2, skiprows=[3, 4]))
+            bar.progress((i + 1) / len(names), text=f"Reading Shopee file {i+1}/{len(names)}…")
+        bar.empty()
+    return pd.concat(dfs, ignore_index=True)
+
 # ==========================================
-# 🎨 STREAMLIT UI
+# 🎨 STREAMLIT INTERACTIVE UI
 # ==========================================
 st.title("🚀 Marketplace Price Automator")
-st.write("Upload your structural files, map the columns dynamically, and generate production-ready pricing exports.")
+st.write("Upload your structural files, map columns dynamically, and generate unified multi-sheet pricing exports.")
 
-# 1. Global Mode Selection
 mode = st.selectbox(
     "Select Automation Mode",
     ["🔄 Run Both Marketplace Channels", "🛍 Shopee Only", "🏪 Lazada Only"],
@@ -80,11 +125,10 @@ mode = st.selectbox(
 st.markdown("---")
 col1, col2 = st.columns(2)
 
-# 2. Sidebar / Column Configuration Containers
 with col1:
     st.subheader("📋 Core Data Settings")
     
-    # Tracker Upload with Flattener applied
+    # Tracker Upload Container
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
@@ -92,14 +136,14 @@ with col1:
     if tracker_file:
         tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file)
         if df_tracker is not None:
-            st.success("💡 Cleaned headers! Select columns below based on their Excel letters.")
+            st.success("💡 Cleaned tracking headers via specified index layout rules.")
             tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
-            tracker_rrp = st.selectbox("Map Regular RRP Column (e.g. [Column CN] PH EC RRP)", [""] + tracker_headers, key="t_rrp")
-            tracker_md = st.selectbox("Map Special / Campaign / Markdown Price Column (e.g. [Column CO] PH MD Price)", [""] + tracker_headers, key="t_md")
+            tracker_rrp = st.selectbox("Map Regular RRP Column", [""] + tracker_headers, key="t_rrp")
+            tracker_md = st.selectbox("Map Special / Campaign / Markdown Price Column", [""] + tracker_headers, key="t_md")
 
     st.markdown("---")
 
-    # SKU Map Upload
+    # SKU Map Upload Container
     sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
     sku_sku, sku_pim = None, None
     if sku_file:
@@ -113,23 +157,26 @@ with col1:
 with col2:
     st.subheader("🛍 Marketplace Templates")
     
-    # Shopee File block
+    # Shopee ZIP Upload block
     shopee_file = None
     shopee_sku, shopee_promo, shopee_orig, shopee_start, shopee_end = None, None, None, None, None
     if "Shopee" in mode or "Both" in mode:
-        shopee_file = st.file_uploader("3. Upload Shopee Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
+        shopee_file = st.file_uploader("3. Upload Shopee Master Template (.zip)", type=["zip"])
         if shopee_file:
             try:
-                shopee_headers = list(read_full_file_standard(shopee_file).columns)
+                # Extract columns directly from the combined data pool within the ZIP package
+                df_shopee_preview = _read_shopee_zip(shopee_file)
+                shopee_headers = list(df_shopee_preview.columns)
+                
                 shopee_sku = st.selectbox("Map SKU Column", [""] + shopee_headers, key="sh_sku")
                 shopee_promo = st.selectbox("Map Promotion/Discount Price Column", [""] + shopee_headers, key="sh_promo")
                 shopee_orig = st.selectbox("Map Original Price Column", [""] + shopee_headers, key="sh_orig")
                 shopee_start = st.selectbox("Map Start Date (Optional)", [""] + shopee_headers, key="sh_start")
                 shopee_end = st.selectbox("Map End Date (Optional)", [""] + shopee_headers, key="sh_end")
             except Exception as e:
-                st.error(f"Could not parse Shopee layout: {e}")
+                st.error(f"Could not open or parse Shopee ZIP package stream: {e}")
 
-    # Lazada File block
+    # Lazada Upload block
     lazada_file = None
     lazada_sku, lazada_price = None, None
     if "Lazada" in mode or "Both" in mode:
@@ -146,27 +193,27 @@ with col2:
 st.markdown("---")
 
 # ==========================================
-# ⚙️ BACKEND PROCESSING CORE
+# ⚙️ PROCESSING EXECUTION CORE
 # ==========================================
 if st.button("🚀 Run Automation Process", type="primary", use_container_width=True):
     
-    # Validation Safeguards
+    # Form Validation Passports
     error_found = False
     if not tracker_file or not tracker_pim or not tracker_rrp or not tracker_md:
-        st.error("❌ Please upload the Tracker file and completely map PIM, RRP, and Special Price columns."); error_found = True
+        st.error("❌ Tracker layout mappings are invalid or unassigned."); error_found = True
     if not sku_file or not sku_sku or not sku_pim:
-        st.error("❌ Please upload the SKU Map file and completely map SKU and PIM columns."); error_found = True
+        st.error("❌ Universal reference SKU mapping parameters must be fully bound."); error_found = True
     if ("Shopee" in mode or "Both" in mode) and (not shopee_file or not shopee_sku or not shopee_promo or not shopee_orig):
-        st.error("❌ Shopee is selected, but dynamic structural column mapping is incomplete."); error_found = True
+        st.error("❌ Shopee engine selected, but tracking dimensions are unassigned."); error_found = True
     if ("Lazada" in mode or "Both" in mode) and (not lazada_file or not lazada_sku or not lazada_price):
-        st.error("❌ Lazada is selected, but dynamic structural column mapping is incomplete."); error_found = True
+        st.error("❌ Lazada engine selected, but data columns remain unassigned."); error_found = True
 
     if not error_found:
-        with st.spinner("Processing files and calculating pricing logic..."):
+        with st.spinner("Executing system pipeline mappings..."):
             try:
                 df_sku = read_full_file_standard(sku_file)
                 
-                # 1. Map Master Tracker Storage
+                # 1. Parse Tracker Dictionary Mapping
                 tracker_map = {}
                 rrp_map = {}
                 for _, row in df_tracker.iterrows():
@@ -176,12 +223,11 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     rrp = pd.to_numeric(row[tracker_rrp], errors='coerce') or 0
                     md = pd.to_numeric(row[tracker_md], errors='coerce') or 0
                     
-                    # Core Logic: If Special/Markdown price is valid and not 0, use it. Else fall back to standard RRP.
                     new_price = round(md) if md != 0 and not pd.isna(md) else round(rrp)
                     tracker_map[pim] = new_price
                     rrp_map[pim] = round(rrp)
 
-                # 2. Cross-reference SKU Map
+                # 2. Cross-reference Platform SKU Tables
                 price_map = {}
                 sku_to_pim = {}
                 for _, row in df_sku.iterrows():
@@ -191,13 +237,12 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         price_map[norm_sku] = tracker_map[pim]
                         sku_to_pim[norm_sku] = pim
 
-                # Open up clean multi-sheet buffer stream
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Handle Shopee Processing Pipeline
+                    # 3. Process Shopee Channel Data via unpacked ZIP arrays
                     if shopee_file and ("Shopee" in mode or "Both" in mode):
-                        df_shopee = read_full_file_standard(shopee_file)
+                        df_shopee = _read_shopee_zip(shopee_file)
                         mismatch_rows = []
                         upload_rows = []
                         
@@ -247,7 +292,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_upload = pd.DataFrame(upload_rows).drop(columns=['QC Comment'], errors='ignore')
                             df_upload.to_excel(writer, sheet_name="Shopee_Upload", index=False)
 
-                    # 4. Handle Lazada Processing Pipeline
+                    # 4. Process Lazada Channel Data
                     if lazada_file and ("Lazada" in mode or "Both" in mode):
                         df_lazada = read_full_file_standard(lazada_file)
                         for idx, row in df_lazada.iterrows():
@@ -260,13 +305,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
 
                 output_buffer.seek(0)
                 
-                st.success("🎉 Automation executed cleanly!")
+                st.success("🎉 Automation executed successfully!")
                 st.download_button(
-                    label="📥 Download Processed Pricing Excel Workbook",
+                    label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
-                    file_name="Automated_Marketplace_Pricing.xlsx",
+                    file_name="Consolidated_Marketplace_Pricing.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"An unexpected systematic failure occurred: {e}")
+                st.error(f"A systematic error occurred during calculations: {e}")
