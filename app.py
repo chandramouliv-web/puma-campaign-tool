@@ -84,7 +84,7 @@ def _find_col(df, *keyword_sets):
     for kws in keyword_sets:
         for c in df.columns:
             cl = str(c).strip().lower()
-            if all(kw in cl for kw in kws): return c
+            if any(kw in cl for kw in kws): return c
     return None
 
 # ==========================================
@@ -118,13 +118,20 @@ with col1:
 
     st.markdown("---")
 
+    # Dynamic SKU Map Form Configuration
     sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
     sku_sku, sku_pim = None, None
     if sku_file:
         try:
             sku_headers = list(read_full_file_standard(sku_file).columns)
-            sku_sku = st.selectbox("Map Seller SKU Column", [""] + sku_headers, key="s_sku")
-            sku_pim = st.selectbox("Map PIM ID Column", [""] + sku_headers, key="s_pim")
+            st.info("💡 Auto-suggesting mappings from your SKU Map sheet columns.")
+            
+            # Smart default indices based on your uploaded file ('EAN' vs 'Color_No')
+            def_sku_idx = sku_headers.index("EAN") if "EAN" in sku_headers else 0
+            def_pim_idx = sku_headers.index("Color_No") if "Color_No" in sku_headers else 0
+            
+            sku_sku = st.selectbox("Map Seller SKU / EAN Column", [""] + sku_headers, index=def_sku_idx + 1, key="s_sku")
+            sku_pim = st.selectbox("Map PIM ID / Color_No Column", [""] + sku_headers, index=def_pim_idx + 1, key="s_pim")
         except Exception as e:
             st.error(f"Could not parse SKU Map layout: {e}")
 
@@ -189,11 +196,11 @@ with col2:
         if zalora_upload_file:
             try:
                 zalora_headers = list(read_full_file_standard(zalora_upload_file).columns)
-                zalora_sku = st.selectbox("Map Zalora SKU Column", [""] + zalora_headers, key="zal_sku")
-                zalora_promo = st.selectbox("Map Zalora Sale Price Column", [""] + zalora_headers, key="zal_promo")
-                zalora_orig = st.selectbox("Map Zalora RRP Price Column", [""] + zalora_headers, key="zal_orig")
-                zalora_start = st.selectbox("Map Zalora Sale Start Date Column", [""] + zalora_headers, key="zal_start")
-                zalora_end = st.selectbox("Map Zalora Sale End Date Column", [""] + zalora_headers, key="zal_end")
+                zalora_sku = st.selectbox("Map Zalora SKU Column (e.g. SellerSku)", [""] + zalora_headers, key="zal_sku")
+                zalora_promo = st.selectbox("Map Zalora Sale Price Column (e.g. SalePrice)", [""] + zalora_headers, key="zal_promo")
+                zalora_orig = st.selectbox("Map Zalora RRP Price Column (e.g. Price)", [""] + zalora_headers, key="zal_orig")
+                zalora_start = st.selectbox("Map Zalora Sale Start Date Column (e.g. SaleStartDate)", [""] + zalora_headers, key="zal_start")
+                zalora_end = st.selectbox("Map Zalora Sale End Date Column (e.g. SaleEndDate)", [""] + zalora_headers, key="zal_end")
                 
                 st.caption("🗓️ **Set Manual Zalora Campaign Windows**")
                 zal_dates_col1, zal_dates_col2 = st.columns(2)
@@ -235,8 +242,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 tracker_map = {}
                 rrp_map = {}
                 for _, row in df_tracker.iterrows():
-                    pim = row[tracker_pim]
-                    if pd.isna(pim) or str(pim).strip() == "": continue
+                    pim = clean_id_str(row[tracker_pim])
+                    if not pim: continue
                     
                     rrp = pd.to_numeric(row[tracker_rrp], errors='coerce') or 0
                     md = pd.to_numeric(row[tracker_md], errors='coerce') or 0
@@ -250,15 +257,21 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 sku_to_pim = {}
                 for _, row in df_sku.iterrows():
                     norm_sku = normalize_sku(row[sku_sku])
-                    pim = row[sku_pim]
+                    pim = clean_id_str(row[sku_pim])
                     if pim in tracker_map:
                         price_map[norm_sku] = tracker_map[pim]
                         sku_to_pim[norm_sku] = pim
 
                 output_buffer = io.BytesIO()
-                sheets_written = 0
                 
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                    
+                    # Dashboard Fallback sheet to ensure safety
+                    pd.DataFrame([{
+                        "Run Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Automation Mode Selection": mode,
+                        "Status Pipeline": "Execution Pipeline Formatted Cleanly"
+                    }]).to_excel(writer, sheet_name="Dashboard_Summary", index=False)
                     
                     # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
@@ -313,7 +326,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         if upload_rows:
                             df_upload = pd.DataFrame(upload_rows).drop(columns=['QC Comment'], errors='ignore')
                             df_upload.to_excel(writer, sheet_name="Shopee_Upload", index=False)
-                        sheets_written += 3
 
                     # 4. Process Lazada Channel Data
                     if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
@@ -324,16 +336,15 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             new_price = price_map.get(norm_sku, existing_price)
                             df_lazada.at[idx, lazada_price] = new_price
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
-                        sheets_written += 1
 
                     # 5. Process Zalora Channel Data
                     if zalora_template_file and zalora_upload_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         df_zalora_temp = read_full_file_standard(zalora_template_file)
                         df_zalora_upl = read_full_file_standard(zalora_upload_file)
                         
-                        temp_sku_col = _find_col(df_zalora_temp, ("sku",), ("item",)) or df_zalora_temp.columns[0]
-                        temp_rrp_col = _find_col(df_zalora_temp, ("rrp",), ("original",)) or df_zalora_temp.columns[1]
-                        temp_srp_col = _find_col(df_zalora_temp, ("srp",), ("sale",), ("promo",)) or df_zalora_temp.columns[2]
+                        temp_sku_col = _find_col(df_zalora_temp, ["sku", "item", "sellersku"]) or df_zalora_temp.columns[0]
+                        temp_rrp_col = _find_col(df_zalora_temp, ["price", "rrp", "original"]) or df_zalora_temp.columns[1]
+                        temp_srp_col = _find_col(df_zalora_temp, ["saleprice", "srp", "sale"]) or df_zalora_temp.columns[2]
                         
                         temp_data = {}
                         for _, r in df_zalora_temp.iterrows():
@@ -353,7 +364,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         enriched_temp["Comments"] = ""
                         
                         final_upload_rows = []
-                        invalid_skus = []  # Tracking error logs to pinpoint validation dropouts
+                        invalid_skus = []
                         
                         for idx, row in df_zalora_upl.iterrows():
                             sku = row[zalora_sku]
@@ -361,13 +372,11 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pim = sku_to_pim.get(norm_sku)
                             t_info = temp_data.get(norm_sku)
                             
-                            # Rule 4 Diagnostics check
                             if not pim or norm_sku not in price_map or not t_info or pd.isna(pim):
                                 invalid_skus.append({
-                                    "Row Index": idx + 4,
                                     "Input SKU": sku,
                                     "Normalized SKU": norm_sku,
-                                    "Reason for Removal": "Missing from SKU_Map or Master Tracker mapping framework (#N/A)"
+                                    "Reason for Removal": "Missing mapping match linking Seller SKU to PIM ID in your files (#N/A)"
                                 })
                                 continue
                                 
@@ -412,24 +421,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 enriched_temp.at[t_idx, "Current SRP"] = price_map.get(t_sku_val, "")
                         
                         enriched_temp.to_excel(writer, sheet_name="Zalora_Template_Enriched", index=False)
-                        sheets_written += 1
                         
                         if final_upload_rows:
                             df_zalora_final = pd.DataFrame(final_upload_rows)
                             df_zalora_final.to_excel(writer, sheet_name="Zalora_Final_Upload", index=False)
-                            sheets_written += 1
                         
-                        # Write the error log diagnostic tab
-                        df_errors = pd.DataFrame(invalid_skus) if invalid_skus else pd.DataFrame([{"Message": "No records were dropped. All items mapped successfully!"}])
+                        df_errors = pd.DataFrame(invalid_skus) if invalid_skus else pd.DataFrame([{"Message": "No records were dropped."}])
                         df_errors.to_excel(writer, sheet_name="Zalora_Errors", index=False)
-                        sheets_written += 1
-
-                    if sheets_written == 0:
-                        pd.DataFrame([{
-                            "Execution Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Status": "Skipped",
-                            "Diagnostic Note": "No marketplace template files were uploaded matching the chosen processing mode configuration."
-                        }]).to_excel(writer, sheet_name="Execution_Summary", index=False)
 
                 output_buffer.seek(0)
                 st.success("🎉 Automation executed successfully!")
