@@ -104,7 +104,6 @@ def _read_shopee_zip(uploaded_file):
         bar = st.progress(0, text="Reading Shopee export files…")
         for i, name in enumerate(names):
             with zf.open(name) as f:
-                # Matches your structural header requirements (header=2, skips raw tracking lines)
                 dfs.append(pd.read_excel(f, engine="calamine", header=2, skiprows=[3, 4]))
             bar.progress((i + 1) / len(names), text=f"Reading Shopee file {i+1}/{len(names)}…")
         bar.empty()
@@ -118,7 +117,7 @@ st.write("Upload your structural files, map columns dynamically, and generate un
 
 mode = st.selectbox(
     "Select Automation Mode",
-    ["🔄 Run Both Marketplace Channels", "🛍 Shopee Only", "🏪 Lazada Only"],
+    ["🔄 Run All Marketplace Channels", "🛍 Shopee Only", "🏪 Lazada Only", "👗 Zalora Only"],
     index=0
 )
 
@@ -160,35 +159,48 @@ with col2:
     # Shopee ZIP Upload block
     shopee_file = None
     shopee_sku, shopee_promo, shopee_orig, shopee_start, shopee_end = None, None, None, None, None
-    if "Shopee" in mode or "Both" in mode:
+    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
         shopee_file = st.file_uploader("3. Upload Shopee Master Template (.zip)", type=["zip"])
         if shopee_file:
             try:
-                # Extract columns directly from the combined data pool within the ZIP package
                 df_shopee_preview = _read_shopee_zip(shopee_file)
                 shopee_headers = list(df_shopee_preview.columns)
                 
-                shopee_sku = st.selectbox("Map SKU Column", [""] + shopee_headers, key="sh_sku")
-                shopee_promo = st.selectbox("Map Promotion/Discount Price Column", [""] + shopee_headers, key="sh_promo")
-                shopee_orig = st.selectbox("Map Original Price Column", [""] + shopee_headers, key="sh_orig")
-                shopee_start = st.selectbox("Map Start Date (Optional)", [""] + shopee_headers, key="sh_start")
-                shopee_end = st.selectbox("Map End Date (Optional)", [""] + shopee_headers, key="sh_end")
+                shopee_sku = st.selectbox("Map Shopee SKU Column", [""] + shopee_headers, key="sh_sku")
+                shopee_promo = st.selectbox("Map Shopee Promotion/Discount Price Column", [""] + shopee_headers, key="sh_promo")
+                shopee_orig = st.selectbox("Map Shopee Original Price Column", [""] + shopee_headers, key="sh_orig")
+                shopee_start = st.selectbox("Map Shopee Start Date (Optional)", [""] + shopee_headers, key="sh_start")
+                shopee_end = st.selectbox("Map Shopee End Date (Optional)", [""] + shopee_headers, key="sh_end")
             except Exception as e:
                 st.error(f"Could not open or parse Shopee ZIP package stream: {e}")
 
     # Lazada Upload block
     lazada_file = None
     lazada_sku, lazada_price = None, None
-    if "Lazada" in mode or "Both" in mode:
-        if "Both" in mode: st.markdown("---")
+    if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
+        if mode == "🔄 Run All Marketplace Channels": st.markdown("---")
         lazada_file = st.file_uploader("4. Upload Lazada Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
         if lazada_file:
             try:
                 lazada_headers = list(read_full_file_standard(lazada_file).columns)
                 lazada_sku = st.selectbox("Map Lazada Seller SKU Column", [""] + lazada_headers, key="lz_sku")
-                lazada_price = st.selectbox("Map Special/Campaign Price Column", [""] + lazada_headers, key="lz_price")
+                lazada_price = st.selectbox("Map Lazada Special/Campaign Price Column", [""] + lazada_headers, key="lz_price")
             except Exception as e:
                 st.error(f"Could not parse Lazada layout: {e}")
+
+    # Zalora Upload block
+    zalora_file = None
+    zalora_sku, zalora_price = None, None
+    if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
+        st.markdown("---")
+        zalora_file = st.file_uploader("5. Upload Zalora Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
+        if zalora_file:
+            try:
+                zalora_headers = list(read_full_file_standard(zalora_file).columns)
+                zalora_sku = st.selectbox("Map Zalora SKU / Item Column", [""] + zalora_headers, key="zal_sku")
+                zalora_price = st.selectbox("Map Zalora Target Price Column", [""] + zalora_headers, key="zal_price")
+            except Exception as e:
+                st.error(f"Could not parse Zalora layout: {e}")
 
 st.markdown("---")
 
@@ -203,10 +215,12 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Tracker layout mappings are invalid or unassigned."); error_found = True
     if not sku_file or not sku_sku or not sku_pim:
         st.error("❌ Universal reference SKU mapping parameters must be fully bound."); error_found = True
-    if ("Shopee" in mode or "Both" in mode) and (not shopee_file or not shopee_sku or not shopee_promo or not shopee_orig):
+    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku or not shopee_promo or not shopee_orig):
         st.error("❌ Shopee engine selected, but tracking dimensions are unassigned."); error_found = True
-    if ("Lazada" in mode or "Both" in mode) and (not lazada_file or not lazada_sku or not lazada_price):
+    if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"] and (not lazada_file or not lazada_sku or not lazada_price):
         st.error("❌ Lazada engine selected, but data columns remain unassigned."); error_found = True
+    if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_file or not zalora_sku or not zalora_price):
+        st.error("❌ Zalora engine selected, but data columns remain unassigned."); error_found = True
 
     if not error_found:
         with st.spinner("Executing system pipeline mappings..."):
@@ -241,7 +255,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
                     # 3. Process Shopee Channel Data via unpacked ZIP arrays
-                    if shopee_file and ("Shopee" in mode or "Both" in mode):
+                    if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee = _read_shopee_zip(shopee_file)
                         mismatch_rows = []
                         upload_rows = []
@@ -293,7 +307,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_upload.to_excel(writer, sheet_name="Shopee_Upload", index=False)
 
                     # 4. Process Lazada Channel Data
-                    if lazada_file and ("Lazada" in mode or "Both" in mode):
+                    if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
                         df_lazada = read_full_file_standard(lazada_file)
                         for idx, row in df_lazada.iterrows():
                             norm_sku = normalize_sku(row[lazada_sku])
@@ -302,6 +316,17 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_lazada.at[idx, lazada_price] = new_price
                         
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
+
+                    # 5. Process Zalora Channel Data
+                    if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
+                        df_zalora = read_full_file_standard(zalora_file)
+                        for idx, row in df_zalora.iterrows():
+                            norm_sku = normalize_sku(row[zalora_sku])
+                            existing_price = row[zalora_price]
+                            new_price = price_map.get(norm_sku, existing_price)
+                            df_zalora.at[idx, zalora_price] = new_price
+                        
+                        df_zalora.to_excel(writer, sheet_name="Zalora_Upload", index=False)
 
                 output_buffer.seek(0)
                 
