@@ -333,4 +333,100 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         
                         temp_sku_col = _find_col(df_zalora_temp, ("sku",), ("item",)) or df_zalora_temp.columns[0]
                         temp_rrp_col = _find_col(df_zalora_temp, ("rrp",), ("original",)) or df_zalora_temp.columns[1]
-                        temp_srp_col = _find_col(df_zalora_temp, ("srp",), ("sale",), ("promo",)) or df_zalora_temp.columns
+                        temp_srp_col = _find_col(df_zalora_temp, ("srp",), ("sale",), ("promo",)) or df_zalora_temp.columns[2]
+                        
+                        temp_data = {}
+                        for _, r in df_zalora_temp.iterrows():
+                            tsku = normalize_sku(r[temp_sku_col])
+                            if tsku:
+                                temp_data[tsku] = {
+                                    "rrp": pd.to_numeric(r[temp_rrp_col], errors='coerce'),
+                                    "srp": pd.to_numeric(r[temp_srp_col], errors='coerce')
+                                }
+                        
+                        enriched_temp = df_zalora_temp.copy()
+                        enriched_temp["ALU_NO"] = enriched_temp[temp_sku_col].apply(clean_id_str)
+                        enriched_temp["Current RRP"] = ""
+                        enriched_temp["RRP Check"] = ""
+                        enriched_temp["Current SRP"] = ""
+                        enriched_temp["SRP Check"] = ""
+                        enriched_temp["Comments"] = ""
+                        
+                        final_upload_rows = []
+                        
+                        for idx, row in df_zalora_upl.iterrows():
+                            sku = row[zalora_sku]
+                            norm_sku = normalize_sku(sku)
+                            pim = sku_to_pim.get(norm_sku)
+                            t_info = temp_data.get(norm_sku)
+                            
+                            if not pim or norm_sku not in price_map or not t_info or pd.isna(pim):
+                                continue
+                                
+                            tracker_rrp_val = rrp_map.get(pim, 0)
+                            tracker_srp_val = price_map.get(norm_sku, 0)
+                            upload_rrp = pd.to_numeric(row[zalora_orig], errors='coerce') or 0
+                            upload_srp = pd.to_numeric(row[zalora_promo], errors='coerce') or 0
+                            
+                            rrp_check = (t_info["rrp"] == upload_rrp)
+                            srp_check = (t_info["srp"] == upload_srp)
+                            
+                            if tracker_srp_val == 0:
+                                row[zalora_promo] = ""
+                                row[zalora_start] = ""
+                                row[zalora_end] = ""
+                                final_upload_rows.append(row)
+                                continue
+                                
+                            if rrp_check and srp_check:
+                                current_end_dt = row[zalora_end]
+                                try:
+                                    parsed_end = pd.to_datetime(current_end_dt)
+                                    if parsed_end < datetime.now() + timedelta(days=30):
+                                        row[zalora_start] = zalora_start_str
+                                        row[zalora_end] = zalora_end_str
+                                except:
+                                    row[zalora_start] = zalora_start_str
+                                    row[zalora_end] = zalora_end_str
+                            else:
+                                row[zalora_orig] = tracker_rrp_val
+                                row[zalora_promo] = tracker_srp_val
+                                row[zalora_start] = zalora_start_str
+                                row[zalora_end] = zalora_end_str
+                                
+                            final_upload_rows.append(row)
+                        
+                        for t_idx, t_row in enriched_temp.iterrows():
+                            t_sku_val = normalize_sku(t_row[temp_sku_col])
+                            t_pim = sku_to_pim.get(t_sku_val)
+                            if t_pim:
+                                enriched_temp.at[t_idx, "Current RRP"] = rrp_map.get(t_pim, "")
+                                enriched_temp.at[t_idx, "Current SRP"] = price_map.get(t_sku_val, "")
+                        
+                        enriched_temp.to_excel(writer, sheet_name="Zalora_Template_Enriched", index=False)
+                        if final_upload_rows:
+                            df_zalora_final = pd.DataFrame(final_upload_rows)
+                            df_zalora_final.to_excel(writer, sheet_name="Zalora_Final_Upload", index=False)
+                        else:
+                            pd.DataFrame([{"Message": "All validation files omitted or parsed blank."}]).to_excel(writer, sheet_name="Zalora_Final_Upload", index=False)
+                        sheets_written += 2
+
+                    # 🚨 SAFETY METRIC: If execution fall-through yielded 0 sheets, write a dashboard log to avoid crashing openpyxl
+                    if sheets_written == 0:
+                        pd.DataFrame([{
+                            "Execution Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Status": "Skipped",
+                            "Diagnostic Note": "No marketplace template files were uploaded matching the chosen processing mode configuration."
+                        }]).to_excel(writer, sheet_name="Execution_Summary", index=False)
+
+                output_buffer.seek(0)
+                st.success("🎉 Automation executed successfully!")
+                st.download_button(
+                    label="📥 Download Consolidated Marketplace Workbook",
+                    data=output_buffer,
+                    file_name="Consolidated_Marketplace_Pricing.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"A systematic error occurred during calculations: {e}")
