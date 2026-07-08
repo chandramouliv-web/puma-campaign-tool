@@ -12,60 +12,49 @@ def normalize_sku(sku):
 
 def get_clean_headers_and_df(uploaded_file):
     """
-    Reads the file, detects multi-row headers, flattens them into intuitive 
-    strings, and returns the cleaned list of headers along with the processed DataFrame.
+    Reads Row 3 directly as clean column names and maps them 
+    with their Excel column letters to avoid duplicate name confusion.
     """
     try:
-        # Load the first 5 rows to analyze the header structure
-        if uploaded_file.name.endswith('.csv'):
-            preview_df = pd.read_csv(uploaded_file, nrows=5, header=None)
-        else:
-            preview_df = pd.read_excel(uploaded_file, nrows=5, header=None)
-        
-        # Read full file without headers initially so we can build them manually
+        # Read the file without structural headers initially
         uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
             full_df = pd.read_csv(uploaded_file, header=None)
         else:
             full_df = pd.read_excel(uploaded_file, header=None)
 
-        # Force all header rows to be pure strings to eliminate 'float' errors on empty cells
-        row1 = preview_df.iloc[0].fillna("").astype(str).tolist()
-        row2 = preview_df.iloc[1].fillna("").astype(str).tolist()
-        row3 = preview_df.iloc[2].fillna("").astype(str).tolist()
+        # Extract row 3 (Index 2) as your target header names
+        row3_names = full_df.iloc[2].fillna("").astype(str).tolist()
 
-        # Forward-fill merged row values to handle gaps left by merged cells
-        last_r1 = ""
-        last_r2 = ""
-        combined_headers = []
-        
-        for r1, r2, r3 in zip(row1, row2, row3):
-            # Clean up default pandas naming artifacts and whitespace
-            r1_clean = r1.strip() if r1 != "nan" and "Unnamed:" not in r1 else ""
-            r2_clean = r2.strip() if r2 != "nan" and "Unnamed:" not in r2 else ""
-            r3_clean = r3.strip() if r3 != "nan" and "Unnamed:" not in r3 else ""
-            
-            if r1_clean: last_r1 = r1_clean
-            if r2_clean: last_r2 = r2_clean
-            
-            # Construct a clean, meaningful hierarchy
-            parts = []
-            if last_r1 and "Onwards" not in last_r1: parts.append(last_r1)
-            if last_r2: parts.append(last_r2)
-            if r3_clean: parts.append(r3_clean)
-            
-            # Use a fallback placeholder if the column is entirely unnamed
-            header_name = " - ".join(parts) if parts else "Unnamed Column"
-            combined_headers.append(header_name)
+        # Helper function to generate classic Excel column letters (A, B, C... Z, AA, AB...)
+        def get_excel_col_letter(n):
+            result = ""
+            while n > 0:
+                n, remainder = divmod(n - 1, 26)
+                result = chr(65 + remainder) + result
+            return result
 
-        # Reassign the combined names to the dataframe and drop the multi-row header rows
-        full_df.columns = combined_headers
+        # Map row names cleanly along with their real physical spreadsheet location
+        clean_headers = []
+        for index, name in enumerate(row3_names):
+            clean_name = name.strip()
+            col_letter = get_excel_col_letter(index + 1)
+            
+            # Remove default pandas naming artifacts if the cell is empty
+            if not clean_name or "Unnamed:" in clean_name or clean_name == "nan":
+                clean_name = "Blank Column"
+                
+            # Formats beautifully as: "[Column DM] PH MD Price" or "[Column DN] DISCOUNT %"
+            clean_headers.append(f"[{col_letter}] {clean_name}")
+
+        # Assign the calculated single names to the DataFrame and crop out the structural top 3 layout rows
+        full_df.columns = clean_headers
         full_df = full_df.iloc[3:].reset_index(drop=True)
         
-        return combined_headers, full_df
+        return clean_headers, full_df
 
     except Exception as e:
-        st.error(f"Error flattening headers from {uploaded_file.name}: {e}")
+        st.error(f"Error processing layout headers from {uploaded_file.name}: {e}")
         return [], None
 
 def read_full_file_standard(uploaded_file):
@@ -103,10 +92,10 @@ with col1:
     if tracker_file:
         tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file)
         if df_tracker is not None:
-            st.success("💡 Detected multi-row headers and successfully cleaned them up!")
+            st.success("💡 Cleaned headers! Select columns below based on their Excel letters.")
             tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
-            tracker_rrp = st.selectbox("Map RRP Column (e.g. PH EC RRP)", [""] + tracker_headers, key="t_rrp")
-            tracker_md = st.selectbox("Map Markdown Price Column (e.g. PH MD Price)", [""] + tracker_headers, key="t_md")
+            tracker_rrp = st.selectbox("Map RRP Column (e.g. [Column CN] PH EC RRP)", [""] + tracker_headers, key="t_rrp")
+            tracker_md = st.selectbox("Map Markdown Price Column (e.g. [Column CO] PH MD Price)", [""] + tracker_headers, key="t_md")
 
     st.markdown("---")
 
@@ -118,8 +107,8 @@ with col1:
             sku_headers = list(read_full_file_standard(sku_file).columns)
             sku_sku = st.selectbox("Map Seller SKU Column", [""] + sku_headers, key="s_sku")
             sku_pim = st.selectbox("Map PIM ID Column", [""] + sku_headers, key="s_pim")
-        except:
-            st.error("Could not parse SKU Map layout.")
+        except Exception as e:
+            st.error(f"Could not parse SKU Map layout: {e}")
 
 with col2:
     st.subheader("🛍 Marketplace Templates")
@@ -137,8 +126,8 @@ with col2:
                 shopee_orig = st.selectbox("Map Original Price Column", [""] + shopee_headers, key="sh_orig")
                 shopee_start = st.selectbox("Map Start Date (Optional)", [""] + shopee_headers, key="sh_start")
                 shopee_end = st.selectbox("Map End Date (Optional)", [""] + shopee_headers, key="sh_end")
-            except:
-                st.error("Could not parse Shopee layout.")
+            except Exception as e:
+                st.error(f"Could not parse Shopee layout: {e}")
 
     # Lazada File block
     lazada_file = None
@@ -151,8 +140,8 @@ with col2:
                 lazada_headers = list(read_full_file_standard(lazada_file).columns)
                 lazada_sku = st.selectbox("Map Lazada Seller SKU Column", [""] + lazada_headers, key="lz_sku")
                 lazada_price = st.selectbox("Map Special/Campaign Price Column", [""] + lazada_headers, key="lz_price")
-            except:
-                st.error("Could not parse Lazada layout.")
+            except Exception as e:
+                st.error(f"Could not parse Lazada layout: {e}")
 
 st.markdown("---")
 
