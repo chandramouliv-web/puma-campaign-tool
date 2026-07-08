@@ -118,7 +118,6 @@ with col1:
 
     st.markdown("---")
 
-    # Dynamic SKU Map Form Configuration
     sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
     sku_sku, sku_pim = None, None
     if sku_file:
@@ -126,7 +125,6 @@ with col1:
             sku_headers = list(read_full_file_standard(sku_file).columns)
             st.info("💡 Auto-suggesting mappings from your SKU Map sheet columns.")
             
-            # Smart default indices based on your uploaded file ('EAN' vs 'Color_No')
             def_sku_idx = sku_headers.index("EAN") if "EAN" in sku_headers else 0
             def_pim_idx = sku_headers.index("Color_No") if "Color_No" in sku_headers else 0
             
@@ -366,6 +364,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         final_upload_rows = []
                         invalid_skus = []
                         
+                        # Crucial Fix: Force the destination cells to object/str datatype 
+                        # to eliminate datatype conflicts inside openpyxl entirely
+                        df_zalora_upl = df_zalora_upl.astype({
+                            zalora_orig: object, zalora_promo: object,
+                            zalora_start: object, zalora_end: object
+                        })
+                        
                         for idx, row in df_zalora_upl.iterrows():
                             sku = row[zalora_sku]
                             norm_sku = normalize_sku(sku)
@@ -389,10 +394,10 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             srp_check = (t_info["srp"] == upload_srp)
                             
                             if tracker_srp_val == 0:
-                                row[zalora_promo] = ""
-                                row[zalora_start] = ""
-                                row[zalora_end] = ""
-                                final_upload_rows.append(row)
+                                df_zalora_upl.at[idx, zalora_promo] = ""
+                                df_zalora_upl.at[idx, zalora_start] = ""
+                                df_zalora_upl.at[idx, zalora_end] = ""
+                                final_upload_rows.append(df_zalora_upl.iloc[idx])
                                 continue
                                 
                             if rrp_check and srp_check:
@@ -400,25 +405,25 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 try:
                                     parsed_end = pd.to_datetime(current_end_dt)
                                     if parsed_end < datetime.now() + timedelta(days=30):
-                                        row[zalora_start] = zalora_start_str
-                                        row[zalora_end] = zalora_end_str
+                                        df_zalora_upl.at[idx, zalora_start] = str(zalora_start_str)
+                                        df_zalora_upl.at[idx, zalora_end] = str(zalora_end_str)
                                 except:
-                                    row[zalora_start] = zalora_start_str
-                                    row[zalora_end] = zalora_end_str
+                                    df_zalora_upl.at[idx, zalora_start] = str(zalora_start_str)
+                                    df_zalora_upl.at[idx, zalora_end] = str(zalora_end_str)
                             else:
-                                row[zalora_orig] = tracker_rrp_val
-                                row[zalora_promo] = tracker_srp_val
-                                row[zalora_start] = zalora_start_str
-                                row[zalora_end] = zalora_end_str
+                                df_zalora_upl.at[idx, zalora_orig] = str(tracker_rrp_val)
+                                df_zalora_upl.at[idx, zalora_promo] = str(tracker_srp_val)
+                                df_zalora_upl.at[idx, zalora_start] = str(zalora_start_str)
+                                df_zalora_upl.at[idx, zalora_end] = str(zalora_end_str)
                                 
-                            final_upload_rows.append(row)
+                            final_upload_rows.append(df_zalora_upl.iloc[idx])
                         
                         for t_idx, t_row in enriched_temp.iterrows():
                             t_sku_val = normalize_sku(t_row[temp_sku_col])
                             t_pim = sku_to_pim.get(t_sku_val)
                             if t_pim:
-                                enriched_temp.at[t_idx, "Current RRP"] = rrp_map.get(t_pim, "")
-                                enriched_temp.at[t_idx, "Current SRP"] = price_map.get(t_sku_val, "")
+                                enriched_temp.at[t_idx, "Current RRP"] = str(rrp_map.get(t_pim, ""))
+                                enriched_temp.at[t_idx, "Current SRP"] = str(price_map.get(t_sku_val, ""))
                         
                         enriched_temp.to_excel(writer, sheet_name="Zalora_Template_Enriched", index=False)
                         
