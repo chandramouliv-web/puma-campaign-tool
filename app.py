@@ -29,10 +29,10 @@ def get_clean_headers_and_df(uploaded_file):
         else:
             full_df = pd.read_excel(uploaded_file, header=None)
 
-        # Check if row 1 or row 2 contains campaign identifiers like "BAU", "PAYDAY", "DDAY", "MEGA"
-        row1 = preview_df.iloc[0].astype(str).tolist()
-        row2 = preview_df.iloc[1].astype(str).tolist()
-        row3 = preview_df.iloc[2].astype(str).tolist()
+        # Force all header rows to be pure strings to eliminate 'float' errors on empty cells
+        row1 = preview_df.iloc[0].fillna("").astype(str).tolist()
+        row2 = preview_df.iloc[1].fillna("").astype(str).tolist()
+        row3 = preview_df.iloc[2].fillna("").astype(str).tolist()
 
         # Forward-fill merged row values to handle gaps left by merged cells
         last_r1 = ""
@@ -40,9 +40,10 @@ def get_clean_headers_and_df(uploaded_file):
         combined_headers = []
         
         for r1, r2, r3 in zip(row1, row2, row3):
-            r1_clean = r1 if r1 != "nan" and "Unnamed:" not in r1 else ""
-            r2_clean = r2 if r2 != "nan" and "Unnamed:" not in r2 else ""
-            r3_clean = r3 if r3 != "nan" and "Unnamed:" not in r3 else ""
+            # Clean up default pandas naming artifacts and whitespace
+            r1_clean = r1.strip() if r1 != "nan" and "Unnamed:" not in r1 else ""
+            r2_clean = r2.strip() if r2 != "nan" and "Unnamed:" not in r2 else ""
+            r3_clean = r3.strip() if r3 != "nan" and "Unnamed:" not in r3 else ""
             
             if r1_clean: last_r1 = r1_clean
             if r2_clean: last_r2 = r2_clean
@@ -53,8 +54,8 @@ def get_clean_headers_and_df(uploaded_file):
             if last_r2: parts.append(last_r2)
             if r3_clean: parts.append(r3_clean)
             
-            # fallback if all are empty
-            header_name = " - ".join(parts) if parts else "Empty Column"
+            # Use a fallback placeholder if the column is entirely unnamed
+            header_name = " - ".join(parts) if parts else "Unnamed Column"
             combined_headers.append(header_name)
 
         # Reassign the combined names to the dataframe and drop the multi-row header rows
@@ -101,10 +102,11 @@ with col1:
     
     if tracker_file:
         tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file)
-        st.success("💡 Detected multi-row headers and successfully cleaned them up!")
-        tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
-        tracker_rrp = st.selectbox("Map RRP Column (e.g. PH EC RRP)", [""] + tracker_headers, key="t_rrp")
-        tracker_md = st.selectbox("Map Markdown Price Column (e.g. PH MD Price)", [""] + tracker_headers, key="t_md")
+        if df_tracker is not None:
+            st.success("💡 Detected multi-row headers and successfully cleaned them up!")
+            tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
+            tracker_rrp = st.selectbox("Map RRP Column (e.g. PH EC RRP)", [""] + tracker_headers, key="t_rrp")
+            tracker_md = st.selectbox("Map Markdown Price Column (e.g. PH MD Price)", [""] + tracker_headers, key="t_md")
 
     st.markdown("---")
 
