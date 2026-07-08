@@ -94,8 +94,8 @@ with col1:
         if df_tracker is not None:
             st.success("💡 Cleaned headers! Select columns below based on their Excel letters.")
             tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
-            tracker_rrp = st.selectbox("Map RRP Column (e.g. [Column CN] PH EC RRP)", [""] + tracker_headers, key="t_rrp")
-            tracker_md = st.selectbox("Map Markdown Price Column (e.g. [Column CO] PH MD Price)", [""] + tracker_headers, key="t_md")
+            tracker_rrp = st.selectbox("Map Regular RRP Column (e.g. [Column CN] PH EC RRP)", [""] + tracker_headers, key="t_rrp")
+            tracker_md = st.selectbox("Map Special / Campaign / Markdown Price Column (e.g. [Column CO] PH MD Price)", [""] + tracker_headers, key="t_md")
 
     st.markdown("---")
 
@@ -153,7 +153,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
     # Validation Safeguards
     error_found = False
     if not tracker_file or not tracker_pim or not tracker_rrp or not tracker_md:
-        st.error("❌ Please upload the Tracker file and completely map PIM, RRP, and MD columns."); error_found = True
+        st.error("❌ Please upload the Tracker file and completely map PIM, RRP, and Special Price columns."); error_found = True
     if not sku_file or not sku_sku or not sku_pim:
         st.error("❌ Please upload the SKU Map file and completely map SKU and PIM columns."); error_found = True
     if ("Shopee" in mode or "Both" in mode) and (not shopee_file or not shopee_sku or not shopee_promo or not shopee_orig):
@@ -176,6 +176,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     rrp = pd.to_numeric(row[tracker_rrp], errors='coerce') or 0
                     md = pd.to_numeric(row[tracker_md], errors='coerce') or 0
                     
+                    # Core Logic: If Special/Markdown price is valid and not 0, use it. Else fall back to standard RRP.
                     new_price = round(md) if md != 0 and not pd.isna(md) else round(rrp)
                     tracker_map[pim] = new_price
                     rrp_map[pim] = round(rrp)
