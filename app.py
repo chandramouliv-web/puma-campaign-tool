@@ -5,6 +5,8 @@ import re
 import zipfile
 import math
 from datetime import datetime, time
+from openpyxl.styles import PatternFill, Font, Border, Alignment
+from openpyxl.utils import get_column_letter
 
 # Set up page configuration
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
@@ -135,7 +137,7 @@ def _read_shopee_stream_flexible(uploaded_file):
                         if isinstance(df_sheet, dict):
                             for s_name, s_df in df_sheet.items():
                                 if isinstance(s_df, pd.DataFrame) and not s_df.empty:
-                                    dfs.append(s_df) # <-- FIXED TYPO HERE (from s_sheet to s_df)
+                                    dfs.append(s_df)
                         elif isinstance(df_sheet, pd.DataFrame) and not df_sheet.empty:
                             dfs.append(df_sheet)
         if not dfs:
@@ -276,7 +278,7 @@ with col2:
 
     # --- ZALORA SECTION ---
     zalora_file = None
-    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
+    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None, None
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
@@ -358,7 +360,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data (Enforced Bulk Dictionary Parser Engine)
+                    # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee_raw = _read_shopee_stream_flexible(shopee_file)
                         if not df_shopee_raw.empty:
@@ -433,6 +435,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
                             df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
+                            # Build Final Cleaned Shopee Upload File Sheet with Orange Formatting Applied Natively
                             if shopee_final_uploads:
                                 df_sh_upload = pd.DataFrame(shopee_final_uploads)
                                 drop_cols = ['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments']
@@ -594,8 +597,40 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         else:
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
+                # Post-Processing Style Override Engine: Enforce Orange formatting onto Row 1 of Shopee To Upload tab
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Variable unpacking typo resolved.")
+                if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
+                    import openpyxl
+                    wb = openpyxl.load_workbook(output_buffer)
+                    if "To Upload" in wb.sheetnames:
+                        ws = wb["To Upload"]
+                        # Establish Shopee explicit brand visual design criteria matrices
+                        orange_fill = PatternFill(start_color="FF5722", end_color="FF5722", fill_type="solid")
+                        white_bold_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+                        thin_side = openpyxl.styles.Side(style='thin', color='CCCCCC')
+                        clean_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+                        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                        
+                        ws.row_dimensions[1].height = 28
+                        for col_idx in range(1, ws.max_column + 1):
+                            cell = ws.cell(row=1, column=col_idx)
+                            cell.fill = orange_fill
+                            cell.font = white_bold_font
+                            cell.border = clean_border
+                            cell.alignment = center_align
+                        
+                        # Dynamic layout sheet dimensions auto-fitter routine step
+                        for col in ws.columns:
+                            max_len = max(len(str(cell.value or '')) for cell in col)
+                            col_letter = get_column_letter(col[0].column)
+                            ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+                            
+                    new_buffer = io.BytesIO()
+                    wb.save(new_buffer)
+                    output_buffer = new_buffer
+
+                output_buffer.seek(0)
+                st.success("🎉 Process Complete! Orange template branding injected natively into Shopee row 1.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
