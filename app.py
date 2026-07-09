@@ -3,13 +3,14 @@ import pandas as pd
 import io
 import re
 import zipfile
+import math
 from datetime import datetime, time
 
 # Set up page configuration
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
 
 # =================================================================
-# ⚙️ SYSTEM CORE PLUGINS & UTILITIES
+# ⚙️ ULTRA HIGH-PERFORMANCE DATA ENGINES
 # =================================================================
 
 def normalize_sku(sku):
@@ -27,15 +28,33 @@ def clean_id_str(val):
         s = s.split(".")[0]
     return s if s != "nan" else ""
 
-def _to_numeric_safe(val):
-    """Safely converts any cell input to a rounded integer. Treats blank/NaN as 0."""
+def _apply_rounding_strategy(val, strategy_mode):
+    """
+    Applies selected corporate pricing formatting strategy rule:
+    - 'Conditional Round (> 0.50 Round Up)': <=0.50 down, >0.50 up
+    - 'Strict Round Up (Ceiling)': Force pushes any decimal fraction up
+    - 'Follow Exact Tracker Value': No mathematical conversion applied
+    """
+    try:
+        f_val = float(val)
+        if strategy_mode == "Strict Round Up (Ceiling)":
+            return math.ceil(f_val)
+        elif strategy_mode == "Conditional Round (> 0.50 Round Up)":
+            fractional_part = f_val - math.floor(f_val)
+            return math.ceil(f_val) if fractional_part > 0.50 else math.floor(f_val)
+        else:
+            return round(f_val, 2) # Preserves exact float matching
+    except:
+        return 0
+
+def _to_numeric_safe(val, strategy_mode):
     if pd.isna(val):
         return 0
     try:
         num = pd.to_numeric(val, errors='coerce')
         if pd.isna(num):
             return 0
-        return round(float(num))
+        return _apply_rounding_strategy(num, strategy_mode)
     except:
         return 0
 
@@ -155,6 +174,17 @@ with col1:
             st.error(f"Could not parse SKU Map layout: {e}")
 
 with col2:
+    st.subheader("🌐 Regional & Pricing Optimization Matrix")
+    
+    # Regional Select Box Dropdowns Setup
+    target_region = st.selectbox("Select Target Operations Channel Region", ["SG", "MY", "PH"], index=2)
+    selected_strategy = st.selectbox(
+        f"Select Price Rounding Strategy Rule for [{target_region}] Operations",
+        ["Conditional Round (> 0.50 Round Up)", "Strict Round Up (Ceiling)", "Follow Exact Tracker Value"],
+        index=0
+    )
+    
+    st.markdown("---")
     st.subheader("🛍 Marketplace Templates")
     
     # --- SHOPEE SECTION ---
@@ -251,7 +281,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Zalora engine selected, but columns remain unassigned."); error_found = True
 
     if not error_found:
-        with st.spinner("Executing optimized validation metrics..."):
+        with st.spinner("Executing real-time dictionary hashing mappings..."):
             try:
                 # 1. High Performance In-Memory SKU Mapping Ingestion
                 df_sku = read_full_file_standard(sku_file)
@@ -269,7 +299,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     if norm_s: ean_to_pim[norm_s] = pim_clean
                     if raw_s: alu_to_pim[raw_s] = pim_clean
 
-                # 2. Parse Tracker Data once into memory hash maps
+                # 2. Parse Tracker Data once into memory hash maps (Threshold Rounding Rule Applied)
                 tracker_map = {}
                 rrp_map = {}
                 
@@ -280,13 +310,14 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 for t_idx in range(len(df_tracker)):
                     pim_val = clean_id_str(pim_tracker_raw[t_idx])
                     if not pim_val: continue
-                    tracker_map[pim_val] = round(md_tracker_raw[t_idx])
-                    rrp_map[pim_val] = round(rrp_tracker_raw[t_idx])
+                    # Apply custom rounding strategies dynamically relative to your select options
+                    tracker_map[pim_val] = _apply_rounding_strategy(md_tracker_raw[t_idx], selected_strategy)
+                    rrp_map[pim_val] = _apply_rounding_strategy(rrp_tracker_raw[t_idx], selected_strategy)
 
                 # Combine maps for Shopee lookups
                 shopee_price_map = {}
                 sku_to_pim_map = {}
-                for norm_sku, pim_val in raw_sku_to_pim.items() if 'raw_sku_to_pim' in locals() else ean_to_pim.items():
+                for norm_sku, pim_val in ean_to_pim.items():
                     if pim_val in rrp_map:
                         shopee_price_map[norm_sku] = tracker_map.get(pim_val, 0) if tracker_map.get(pim_val, 0) != 0 else rrp_map.get(pim_val, 0)
                         sku_to_pim_map[norm_sku] = pim_val
@@ -297,7 +328,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     pd.DataFrame([{
                         "Run Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "Automation Mode Selection": mode,
-                        "Engine State": "Processed Cleanly via Hash Maps"
+                        "Region Strategy Target": target_region,
+                        "Rounding Policy Enforced": selected_strategy
                     }]).to_excel(writer, sheet_name="Dashboard_Summary", index=False)
                     
                     # 3. Process Shopee Channel Data
@@ -352,7 +384,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         if upload_rows:
                             pd.DataFrame(upload_rows).drop(columns=['QC Comment'], errors='ignore').to_excel(writer, sheet_name="Shopee_Upload", index=False)
 
-                    # 4. Process Lazada Channel Data (Enforced Campaign Price Rules)
+                    # 4. Process Lazada Channel Data (Targeted Price Calculation Protocol)
                     if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
                         df_lazada = read_full_file_standard(lazada_file)
                         lazada_skus = df_lazada[lazada_sku].values
@@ -367,8 +399,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 tracker_rrp_val = rrp_map[pim]
                                 tracker_srp_val = tracker_map[pim]
                                 
-                                # Campaign Price Formula: if Tracker SRP == 0, use Rounded Tracker RRP, else use Rounded Tracker SRP
-                                computed_campaign_price = round(tracker_rrp_val) if tracker_srp_val == 0 else round(tracker_srp_val)
+                                # Dynamic Lazada Campaign Pricing Logic: if SRP == 0 use RRP value, else use SRP value directly
+                                computed_campaign_price = _apply_rounding_strategy(tracker_rrp_val, selected_strategy) if tracker_srp_val == 0 else _apply_rounding_strategy(tracker_srp_val, selected_strategy)
                                 final_lazada_prices.append(computed_campaign_price)
                             else:
                                 final_lazada_prices.append(lazada_prices[i])
@@ -407,10 +439,10 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 continue
                                 
                             tracker_rrp_val = rrp_map[pim]
-                            tracker_srp_val = tracker_map[pim]  # Stays exactly as Tracker SRP value
+                            tracker_srp_val = tracker_map[pim]  # Populated exactly from tracker rules
                             
-                            current_rrp = _to_numeric_safe(row_dict[temp_rrp_col])
-                            current_srp = _to_numeric_safe(row_dict[temp_srp_col])
+                            current_rrp = _to_numeric_safe(row_dict[temp_rrp_col], selected_strategy)
+                            current_srp = _to_numeric_safe(row_dict[temp_srp_col], selected_strategy)
                             
                             initial_rrp_match = (tracker_rrp_val == current_rrp)
                             initial_srp_match = (tracker_srp_val == current_srp)
@@ -442,8 +474,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                         row_dict[zalora_end] = str(zalora_end_str)
                                         row_dict["Comments"] = "Sale End Date Updated."
                                         
-                                        post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col]))
-                                        post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col]))
+                                        post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col], selected_strategy))
+                                        post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col], selected_strategy))
                                         row_dict.update({
                                             "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
                                             "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
@@ -465,8 +497,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                         "Comments": "Sale Price Updated."
                                     })
                                 
-                                post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col]))
-                                post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col]))
+                                post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col], selected_strategy))
+                                post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col], selected_strategy))
                                 row_dict.update({
                                     "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
                                     "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
@@ -487,8 +519,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                         "Comments": "RRP and Sale Price Updated."
                                     })
                                 
-                                post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col]))
-                                post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col]))
+                                post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col], selected_strategy))
+                                post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col], selected_strategy))
                                 row_dict.update({
                                     "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
                                     "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
@@ -510,7 +542,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Lazada Campaign Price rule successfully updated.")
+                st.success(f"🎉 Process Complete! Regional pricing options matrix initialized smoothly for [{target_region}].")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
