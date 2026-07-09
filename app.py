@@ -65,13 +65,11 @@ def get_excel_sheet_names(uploaded_file):
     return ["Default"]
 
 def safe_load_excel_df(stream, sheet_name=None, header_mode=0):
-    """Bypasses layout freezing and format errors across all excel parsing engines."""
     try:
         res = pd.read_excel(stream, sheet_name=sheet_name, header=header_mode, engine='calamine')
     except:
         res = pd.read_excel(stream, sheet_name=sheet_name, header=header_mode)
     
-    # Standardize dictionary outputs to a single uniform DataFrame slice
     if isinstance(res, dict):
         if not res:
             return pd.DataFrame()
@@ -134,11 +132,10 @@ def _read_shopee_stream_flexible(uploaded_file):
                         zipped_bytes = io.BytesIO(f.read())
                         df_sheet = safe_load_excel_df(zipped_bytes)
                         
-                        # Bulletproof Verification: Catch and convert dictionary matrices before appending
                         if isinstance(df_sheet, dict):
                             for s_name, s_df in df_sheet.items():
                                 if isinstance(s_df, pd.DataFrame) and not s_df.empty:
-                                    dfs.append(s_sheet)
+                                    dfs.append(s_df)
                         elif isinstance(df_sheet, pd.DataFrame) and not df_sheet.empty:
                             dfs.append(df_sheet)
         if not dfs:
@@ -179,7 +176,7 @@ with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_sheet = None
-    tracker_pim, tracker_rrp, tracker_md = None, None, None
+    tracker_pim, tracker_rrp, tracker_md = None, None, None, None
     df_tracker = None
     
     if tracker_file:
@@ -279,7 +276,7 @@ with col2:
 
     # --- ZALORA SECTION ---
     zalora_file = None
-    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None, None
+    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
@@ -361,7 +358,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data (Enforced Bulk Dictionary Parser Engine)
+                    # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee_raw = _read_shopee_stream_flexible(shopee_file)
                         if not df_shopee_raw.empty:
@@ -598,7 +595,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Shopee Discount Promotion structures integrated smoothly with dictionary layout handling corrections.")
+                st.success("🎉 Process Complete! Unpacking bug cleared successfully.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
