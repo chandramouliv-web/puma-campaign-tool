@@ -9,7 +9,7 @@ from datetime import datetime, time
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
 
 # =================================================================
-# ⚙️ ULTRA HIGH-PERFORMANCE LOW-LATENCY ENGINES
+# ⚙️ SYSTEM CORE PLUGINS & UTILITIES
 # =================================================================
 
 def normalize_sku(sku):
@@ -26,6 +26,18 @@ def clean_id_str(val):
     if re.match(r"^-?\d+\.0+$", s):
         s = s.split(".")[0]
     return s if s != "nan" else ""
+
+def _to_numeric_safe(val):
+    """Safely converts any cell input to a rounded integer. Treats blank/NaN as 0."""
+    if pd.isna(val):
+        return 0
+    try:
+        num = pd.to_numeric(val, errors='coerce')
+        if pd.isna(num):
+            return 0
+        return round(float(num))
+    except:
+        return 0
 
 def get_clean_headers_and_df(uploaded_file):
     try:
@@ -239,14 +251,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Zalora engine selected, but columns remain unassigned."); error_found = True
 
     if not error_found:
-        with st.spinner("Executing real-time dictionary hashing mappings..."):
+        with st.spinner("Executing system pipeline mappings..."):
             try:
-                # ⚡ INSTANT IN-MEMORY CONVERSION: Ingest SKU file as pure arrays
+                # Ingest SKU file entries safely as plain arrays
                 df_sku = read_full_file_standard(sku_file)
                 sku_raw_arr = df_sku[sku_sku].astype(str).values
                 pim_raw_arr = df_sku[sku_pim].astype(str).values
                 
-                # Pre-build double-sided mapping indices for O(1) cascading fallbacks
                 ean_to_pim = {}
                 alu_to_pim = {}
                 
@@ -258,7 +269,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     if norm_s: ean_to_pim[norm_s] = pim_clean
                     if raw_s: alu_to_pim[raw_s] = pim_clean
 
-                # ⚡ INSTANT IN-MEMORY TRACKER CONVERSION
+                # Ingest Tracker entries safely into memory dictionaries
                 tracker_map = {}
                 rrp_map = {}
                 
@@ -278,7 +289,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     pd.DataFrame([{
                         "Run Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "Automation Mode Selection": mode,
-                        "Engine State": "Executed Instantly via Primitive List Dictionaries"
+                        "Status": "Processed Cleanly"
                     }]).to_excel(writer, sheet_name="Dashboard_Summary", index=False)
                     
                     # 3. Process Shopee Channel Data
@@ -343,7 +354,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         df_lazada[lazada_price] = final_lazada_prices
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # 5. Process Zalora Channel Data (Enforced Instant Lookups Architecture)
+                    # 5. Process Zalora Channel Data
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         df_zalora_raw = read_full_file_standard(zalora_file)
                         df_zalora_raw.to_excel(writer, sheet_name="Direct Download From Zalora", index=False)
@@ -355,17 +366,16 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         working_flow_rows = []
                         final_to_upload_rows = []
                         
-                        # Ingest metrics into clean list dictionaries
                         zalora_records = df_zalora_raw.to_dict('records')
                         
                         for row_dict in zalora_records:
                             sku = str(row_dict[temp_sku_col]).strip()
                             norm_sku = normalize_sku(sku)
                             
-                            # CASCADING CATCH: Check direct structural ALU first, fallback instantly to normalized EAN hash map
+                            # Cascading lookup strategy
                             pim = alu_to_pim.get(sku) or ean_to_pim.get(norm_sku)
                             
-                            # RULE 1: Item Not Found in Tracker
+                            # RULE 1: Item Not Found inside Master Tracker
                             if not pim or pim not in rrp_map:
                                 row_dict.update({
                                     "ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False",
@@ -376,39 +386,41 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 continue
                                 
                             tracker_rrp_val = rrp_map[pim]
-                            tracker_srp_val = tracker_map[pim]  # Directly assigned from tracker array matrix
+                            tracker_srp_val = tracker_map[pim]  # Directly matches Tracker SRP/PH MD Price
                             
-                            current_rrp = pd.to_numeric(row_dict[temp_rrp_col], errors='coerce') or 0
-                            current_srp = pd.to_numeric(row_dict[temp_srp_col], errors='coerce') or 0
+                            # Normalize inputs safely to evaluate numeric values accurately
+                            current_rrp = _to_numeric_safe(row_dict[temp_rrp_col])
+                            current_srp = _to_numeric_safe(row_dict[temp_srp_col])
                             
-                            rrp_match = (tracker_rrp_val == current_rrp)
-                            srp_match = (tracker_srp_val == current_srp)
-                            
-                            row_dict.update({
-                                "ALU_NO/Color_No": str(pim), 
-                                "RRP/PH EC RRP": str(tracker_rrp_val),
-                                "RRP check (I=D)": str(rrp_match), 
-                                "SRP/PH MD Price": str(tracker_srp_val),  
-                                "SRP check (K=E)": str(srp_match)
-                            })
+                            # Check conditions prior to running price modifications
+                            initial_rrp_match = (tracker_rrp_val == current_rrp)
+                            initial_srp_match = (tracker_srp_val == current_srp)
                             
                             has_no_dates = pd.isna(row_dict[zalora_start]) or str(row_dict[zalora_start]).strip() == ""
                             is_last_day = is_last_day_of_month(row_dict[zalora_end])
                             
                             # RULE 2: No Changes Required
-                            if rrp_match and srp_match and has_no_dates:
-                                row_dict["Comments"] = "All Good – RRP and SRP Match the Tracker. No Update Required."
+                            if initial_rrp_match and initial_srp_match and has_no_dates:
+                                row_dict.update({
+                                    "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                    "RRP check (I=D)": "True", "SRP/PH MD Price": str(tracker_srp_val),
+                                    "SRP check (K=E)": "True", "Comments": "All Good – RRP and SRP Match the Tracker. No Update Required."
+                                })
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
-                            # RULE 3: Month-End Sale Window Exception Check
-                            if rrp_match and srp_match and is_last_day:
-                                row_dict["Comments"] = "All Good – Sale Ends at Month End. No Update Required."
+                            # RULE 3: Month-End Sale Window
+                            if initial_rrp_match and initial_srp_match and is_last_day:
+                                row_dict.update({
+                                    "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                    "RRP check (I=D)": "True", "SRP/PH MD Price": str(tracker_srp_val),
+                                    "SRP check (K=E)": "True", "Comments": "All Good – Sale Ends at Month End. No Update Required."
+                                })
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
                             # RULE 4: Sale Price Mismatch Pipeline
-                            if rrp_match and not srp_match:
+                            if initial_rrp_match and not initial_srp_match:
                                 if tracker_srp_val == 0:
                                     row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "Sale Price Updated."})
                                 else:
@@ -417,12 +429,21 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                         zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
                                         "Comments": "Sale Price Updated."
                                     })
+                                
+                                # Recalculate indicators post-update execution step
+                                post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col]))
+                                post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col]))
+                                row_dict.update({
+                                    "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                    "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
+                                    "SRP check (K=E)": str(post_srp_match)
+                                })
                                 working_flow_rows.append(row_dict)
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
                                 
-                            # RULE 5: Base RRP Overwrite variance check conditions
-                            if not rrp_match:
+                            # RULE 5: RRP Mismatch Overwrite
+                            if not initial_rrp_match:
                                 row_dict[temp_rrp_col] = str(tracker_rrp_val)
                                 if tracker_srp_val == 0:
                                     row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "RRP and Sale Price Updated."})
@@ -432,13 +453,22 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                         zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
                                         "Comments": "RRP and Sale Price Updated."
                                     })
+                                
+                                # Recalculate indicators post-update execution step
+                                post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col]))
+                                post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col]))
+                                row_dict.update({
+                                    "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                    "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
+                                    "SRP check (K=E)": str(post_srp_match)
+                                })
                                 working_flow_rows.append(row_dict)
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
 
                             working_flow_rows.append(row_dict)
 
-                        # Write rows out directly to excel sheets
+                        # Write primitive dictionary rows directly out into distinct workbook sheets
                         pd.DataFrame(working_flow_rows).to_excel(writer, sheet_name="Working Flow", index=False)
                         
                         if final_to_upload_rows:
@@ -449,7 +479,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload sheet."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🚀 Execution Instantaneous! Array scans completed smoothly.")
+                st.success("🎉 Process Complete! Cleaned headers and verified numeric validation matrices successfully.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
