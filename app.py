@@ -347,11 +347,11 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             raw_parent = str(row.get(shopee_parent, '')).strip()
                             
                             # SKU Column Fallback Rule Validation Check
-                            if not raw_sku or raw_sku.lower() == 'nan':
+                            if not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '':
                                 raw_sku = raw_parent
                                 row[shopee_sku] = raw_sku
                                 
-                            if (not raw_sku or raw_sku.lower() == 'nan') and (not raw_parent or raw_parent.lower() == 'nan'):
+                            if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
                                 row.update({
                                     "ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "",
                                     "Comments": "Missing SKU and Parent SKU."
@@ -569,7 +569,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Multi-channel catalog datasets processed smoothly.")
+                st.success("🎉 Process Complete! Shopee Discount Promotion structures integrated smoothly.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
