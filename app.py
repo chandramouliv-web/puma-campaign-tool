@@ -10,7 +10,7 @@ from datetime import datetime, time
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
 
 # =================================================================
-# ⚙️ ULTRA HIGH-PERFORMANCE DATA ENGINES
+# ⚙️ HIGH-PERFORMANCE PLUGINS & UTILITIES
 # =================================================================
 
 def normalize_sku(sku):
@@ -29,12 +29,6 @@ def clean_id_str(val):
     return s if s != "nan" else ""
 
 def _apply_rounding_strategy(val, strategy_mode):
-    """
-    Applies selected corporate pricing formatting strategy rule:
-    - 'Conditional Round (> 0.50 Round Up)': <=0.50 down, >0.50 up
-    - 'Strict Round Up (Ceiling)': Force pushes any decimal fraction up
-    - 'Follow Exact Tracker Value': No mathematical conversion applied
-    """
     try:
         f_val = float(val)
         if strategy_mode == "Strict Round Up (Ceiling)":
@@ -43,7 +37,7 @@ def _apply_rounding_strategy(val, strategy_mode):
             fractional_part = f_val - math.floor(f_val)
             return math.ceil(f_val) if fractional_part > 0.50 else math.floor(f_val)
         else:
-            return round(f_val, 2) # Preserves exact float matching
+            return round(f_val, 2)
     except:
         return 0
 
@@ -58,13 +52,24 @@ def _to_numeric_safe(val, strategy_mode):
     except:
         return 0
 
-def get_clean_headers_and_df(uploaded_file):
+def get_excel_sheet_names(uploaded_file):
+    """Safely extracts sheet names if the file is an Excel workbook."""
+    if uploaded_file and uploaded_file.name.endswith(('.xls', '.xlsx')):
+        try:
+            uploaded_file.seek(0)
+            xl = pd.ExcelFile(uploaded_file)
+            return xl.sheet_names
+        except:
+            return ["Sheet1"]
+    return ["Default"]
+
+def get_clean_headers_and_df(uploaded_file, target_sheet=None):
     try:
         uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
             full_df = pd.read_csv(uploaded_file, header=None)
         else:
-            full_df = pd.read_excel(uploaded_file, header=None)
+            full_df = pd.read_excel(uploaded_file, sheet_name=target_sheet, header=None)
 
         row3_names = full_df.iloc[2].fillna("").astype(str).tolist()
 
@@ -90,11 +95,11 @@ def get_clean_headers_and_df(uploaded_file):
         st.error(f"Error processing layout headers from {uploaded_file.name}: {e}")
         return [], None
 
-def read_full_file_standard(uploaded_file):
+def read_full_file_standard(uploaded_file, target_sheet=None):
     uploaded_file.seek(0)
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file)
-    return pd.read_excel(uploaded_file)
+    return pd.read_excel(uploaded_file, sheet_name=target_sheet)
 
 def _read_shopee_zip(uploaded_file):
     dfs = []
@@ -131,7 +136,7 @@ def is_last_day_of_month(date_val):
 # 🎨 STREAMLIT INTERACTIVE UI
 # ==========================================
 st.title("🚀 Marketplace Price Automator")
-st.write("Upload your structural files, map columns dynamically, and generate unified multi-sheet pricing exports.")
+st.write("Upload your structural files, map tabs, link columns dynamically, and generate multi-sheet pricing exports.")
 
 mode = st.selectbox(
     "Select Automation Mode",
@@ -145,11 +150,16 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
+    tracker_sheet = None
     tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
     
     if tracker_file:
-        tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file)
+        if tracker_file.name.endswith(('.xlsx', '.xls')):
+            t_sheets = get_excel_sheet_names(tracker_file)
+            tracker_sheet = st.selectbox("Select Tracker Excel Tab", t_sheets, key="t_sheet_drop")
+            
+        tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file, target_sheet=tracker_sheet)
         if df_tracker is not None:
             st.success("💡 Cleaned tracking headers via specified index layout rules.")
             tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
@@ -159,10 +169,15 @@ with col1:
     st.markdown("---")
 
     sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
+    sku_sheet = None
     sku_sku, sku_pim = None, None
     if sku_file:
+        if sku_file.name.endswith(('.xlsx', '.xls')):
+            s_sheets = get_excel_sheet_names(sku_file)
+            sku_sheet = st.selectbox("Select SKU Map Excel Tab", s_sheets, key="s_sheet_drop")
+            
         try:
-            sku_headers = list(read_full_file_standard(sku_file).columns)
+            sku_headers = list(read_full_file_standard(sku_file, target_sheet=sku_sheet).columns)
             st.info("💡 Auto-suggesting mappings from your SKU Map columns.")
             
             def_sku_idx = sku_headers.index("EAN") if "EAN" in sku_headers else 0
@@ -176,7 +191,6 @@ with col1:
 with col2:
     st.subheader("🌐 Regional & Pricing Optimization Matrix")
     
-    # Regional Select Box Dropdowns Setup
     target_region = st.selectbox("Select Target Operations Channel Region", ["SG", "MY", "PH"], index=2)
     selected_strategy = st.selectbox(
         f"Select Price Rounding Strategy Rule for [{target_region}] Operations",
@@ -220,13 +234,18 @@ with col2:
 
     # --- LAZADA SECTION ---
     lazada_file = None
+    lazada_sheet = None
     lazada_sku, lazada_price = None, None
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
         if mode == "🔄 Run All Marketplace Channels": st.markdown("---")
         lazada_file = st.file_uploader("4. Upload Lazada Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
         if lazada_file:
+            if lazada_file.name.endswith(('.xlsx', '.xls')):
+                lz_sheets = get_excel_sheet_names(lazada_file)
+                lazada_sheet = st.selectbox("Select Lazada Excel Tab", lz_sheets, key="lz_sheet_drop")
+                
             try:
-                lazada_headers = list(read_full_file_standard(lazada_file).columns)
+                lazada_headers = list(read_full_file_standard(lazada_file, target_sheet=lazada_sheet).columns)
                 lazada_sku = st.selectbox("Map Lazada Seller SKU Column", [""] + lazada_headers, key="lz_sku")
                 lazada_price = st.selectbox("Map Lazada Special/Campaign Price Column", [""] + lazada_headers, key="lz_price")
             except Exception as e:
@@ -234,6 +253,7 @@ with col2:
 
     # --- ZALORA SECTION ---
     zalora_file = None
+    zalora_sheet = None
     zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
@@ -241,8 +261,12 @@ with col2:
         zalora_file = st.file_uploader("5. Upload Master Zalora Price Template (.xlsx)", type=["xlsx"], key="zal_master")
         
         if zalora_file:
+            if zalora_file.name.endswith(('.xlsx', '.xls')):
+                zal_sheets = get_excel_sheet_names(zalora_file)
+                zalora_sheet = st.selectbox("Select Zalora Target Upload Excel Tab", zal_sheets, key="zal_sheet_drop")
+                
             try:
-                zalora_headers = list(read_full_file_standard(zalora_file).columns)
+                zalora_headers = list(read_full_file_standard(zalora_file, target_sheet=zalora_sheet).columns)
                 zalora_sku = st.selectbox("Map Zalora SKU Column (e.g. SellerSku)", [""] + zalora_headers, key="zal_sku")
                 zalora_promo = st.selectbox("Map Zalora Sale Price Column (e.g. SalePrice)", [""] + zalora_headers, key="zal_promo")
                 zalora_orig = st.selectbox("Map Zalora RRP Price Column (e.g. Price)", [""] + zalora_headers, key="zal_orig")
@@ -281,10 +305,10 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Zalora engine selected, but columns remain unassigned."); error_found = True
 
     if not error_found:
-        with st.spinner("Executing real-time dictionary hashing mappings..."):
+        with st.spinner("Executing system pipeline mappings..."):
             try:
                 # 1. High Performance In-Memory SKU Mapping Ingestion
-                df_sku = read_full_file_standard(sku_file)
+                df_sku = read_full_file_standard(sku_file, target_sheet=sku_sheet)
                 sku_raw_arr = df_sku[sku_sku].astype(str).values
                 pim_raw_arr = df_sku[sku_pim].astype(str).values
                 
@@ -299,7 +323,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     if norm_s: ean_to_pim[norm_s] = pim_clean
                     if raw_s: alu_to_pim[raw_s] = pim_clean
 
-                # 2. Parse Tracker Data once into memory hash maps (Threshold Rounding Rule Applied)
+                # 2. Parse Tracker Data once into memory hash maps
                 tracker_map = {}
                 rrp_map = {}
                 
@@ -310,7 +334,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 for t_idx in range(len(df_tracker)):
                     pim_val = clean_id_str(pim_tracker_raw[t_idx])
                     if not pim_val: continue
-                    # Apply custom rounding strategies dynamically relative to your select options
                     tracker_map[pim_val] = _apply_rounding_strategy(md_tracker_raw[t_idx], selected_strategy)
                     rrp_map[pim_val] = _apply_rounding_strategy(rrp_tracker_raw[t_idx], selected_strategy)
 
@@ -384,9 +407,9 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         if upload_rows:
                             pd.DataFrame(upload_rows).drop(columns=['QC Comment'], errors='ignore').to_excel(writer, sheet_name="Shopee_Upload", index=False)
 
-                    # 4. Process Lazada Channel Data (Targeted Price Calculation Protocol)
+                    # 4. Process Lazada Channel Data
                     if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
-                        df_lazada = read_full_file_standard(lazada_file)
+                        df_lazada = read_full_file_standard(lazada_file, target_sheet=lazada_sheet)
                         lazada_skus = df_lazada[lazada_sku].values
                         lazada_prices = df_lazada[lazada_price].values
                         
@@ -399,7 +422,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 tracker_rrp_val = rrp_map[pim]
                                 tracker_srp_val = tracker_map[pim]
                                 
-                                # Dynamic Lazada Campaign Pricing Logic: if SRP == 0 use RRP value, else use SRP value directly
                                 computed_campaign_price = _apply_rounding_strategy(tracker_rrp_val, selected_strategy) if tracker_srp_val == 0 else _apply_rounding_strategy(tracker_srp_val, selected_strategy)
                                 final_lazada_prices.append(computed_campaign_price)
                             else:
@@ -410,7 +432,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
 
                     # 5. Process Zalora Channel Data
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
-                        df_zalora_raw = read_full_file_standard(zalora_file)
+                        df_zalora_raw = read_full_file_standard(zalora_file, target_sheet=zalora_sheet)
                         df_zalora_raw.to_excel(writer, sheet_name="Direct Download From Zalora", index=False)
                         
                         temp_sku_col = _find_col(df_zalora_raw, ["sku", "item", "sellersku"]) or df_zalora_raw.columns[0]
@@ -439,7 +461,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 continue
                                 
                             tracker_rrp_val = rrp_map[pim]
-                            tracker_srp_val = tracker_map[pim]  # Populated exactly from tracker rules
+                            tracker_srp_val = tracker_map[pim]  
                             
                             current_rrp = _to_numeric_safe(row_dict[temp_rrp_col], selected_strategy)
                             current_srp = _to_numeric_safe(row_dict[temp_srp_col], selected_strategy)
@@ -542,7 +564,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success(f"🎉 Process Complete! Regional pricing options matrix initialized smoothly for [{target_region}].")
+                st.success("🎉 Multi-tab evaluation completed instantly!")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
