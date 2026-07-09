@@ -9,7 +9,7 @@ from datetime import datetime, time
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
 
 # =================================================================
-# ⚙️ ULTRA HIGH-PERFORMANCE DATA ENGINES
+# ⚙️ ULTRA HIGH-PERFORMANCE LOW-LATENCY ENGINES
 # =================================================================
 
 def normalize_sku(sku):
@@ -28,7 +28,6 @@ def clean_id_str(val):
     return s if s != "nan" else ""
 
 def get_clean_headers_and_df(uploaded_file):
-    """Single-pass tracker header flattener and layout cleaner."""
     try:
         uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
@@ -133,7 +132,7 @@ with col1:
     if sku_file:
         try:
             sku_headers = list(read_full_file_standard(sku_file).columns)
-            st.info("💡 Auto-suggesting mappings from your SKU Map sheet columns.")
+            st.info("💡 Auto-suggesting mappings from your SKU Map columns.")
             
             def_sku_idx = sku_headers.index("EAN") if "EAN" in sku_headers else 0
             def_pim_idx = sku_headers.index("Color_No") if "Color_No" in sku_headers else 0
@@ -240,14 +239,26 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Zalora engine selected, but columns remain unassigned."); error_found = True
 
     if not error_found:
-        with st.spinner("Executing system pipeline mappings..."):
+        with st.spinner("Executing real-time dictionary hashing mappings..."):
             try:
-                # ⚡ MAXIMUM PERFORMANCE CORE SETTINGS ENGINE (Vectorized Extraction)
+                # ⚡ INSTANT IN-MEMORY CONVERSION: Ingest SKU file as pure arrays
                 df_sku = read_full_file_standard(sku_file)
-                sku_series = df_sku[sku_sku].astype(str).str.strip().str.replace('-', '_').str.lower().values
-                pim_series = df_sku[sku_pim].astype(str).str.strip().values
-                raw_sku_to_pim = dict(zip(sku_series, pim_series))
+                sku_raw_arr = df_sku[sku_sku].astype(str).values
+                pim_raw_arr = df_sku[sku_pim].astype(str).values
                 
+                # Pre-build double-sided mapping indices for O(1) cascading fallbacks
+                ean_to_pim = {}
+                alu_to_pim = {}
+                
+                for idx_s in range(len(sku_raw_arr)):
+                    raw_s = sku_raw_arr[idx_s].strip()
+                    norm_s = normalize_sku(raw_s)
+                    pim_clean = clean_id_str(pim_raw_arr[idx_s])
+                    
+                    if norm_s: ean_to_pim[norm_s] = pim_clean
+                    if raw_s: alu_to_pim[raw_s] = pim_clean
+
+                # ⚡ INSTANT IN-MEMORY TRACKER CONVERSION
                 tracker_map = {}
                 rrp_map = {}
                 
@@ -261,21 +272,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     tracker_map[pim_val] = round(md_tracker_raw[t_idx])
                     rrp_map[pim_val] = round(rrp_tracker_raw[t_idx])
 
-                # Combine maps for O(1) cross-referencing lookups
-                price_map = {}
-                sku_to_pim_map = {}
-                for norm_sku, pim_val in raw_sku_to_pim.items():
-                    if pim_val in rrp_map:
-                        price_map[norm_sku] = tracker_map.get(pim_val, 0)
-                        sku_to_pim_map[norm_sku] = pim_val
-
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
                     pd.DataFrame([{
                         "Run Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "Automation Mode Selection": mode,
-                        "Status Pipeline": "Processed Cleanly via Vectorized Hash Maps"
+                        "Engine State": "Executed Instantly via Primitive List Dictionaries"
                     }]).to_excel(writer, sheet_name="Dashboard_Summary", index=False)
                     
                     # 3. Process Shopee Channel Data
@@ -295,8 +298,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             existing_promo = shopee_promos[idx]
                             orig_price = shopee_origs[idx]
                             
-                            new_price = price_map.get(norm_sku, existing_promo)
-                            pim = sku_to_pim_map.get(norm_sku)
+                            pim = ean_to_pim.get(norm_sku)
+                            new_price = tracker_map.get(pim, existing_promo)
                             rrp = rrp_map.get(pim)
                             
                             comment = ""
@@ -322,8 +325,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             row['QC Comment'] = comment
                             
                             if not is_mismatch and not (pd.isna(new_price) or new_price == "") and not (rrp is not None and rrp == new_price):
-                                upload_row = row.copy()
-                                upload_rows.append(upload_row)
+                                upload_rows.append(row.copy())
 
                         pd.DataFrame(shopee_records).to_excel(writer, sheet_name="Shopee_Master_Updated", index=False)
                         df_mismatch = pd.DataFrame(mismatch_rows) if mismatch_rows else pd.DataFrame([{"Message": "No RRP Mismatches Found"}])
@@ -337,11 +339,11 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         lazada_skus = df_lazada[lazada_sku].values
                         lazada_prices = df_lazada[lazada_price].values
                         
-                        final_lazada_prices = [price_map.get(normalize_sku(lazada_skus[i]), lazada_prices[i]) for i in range(len(df_lazada))]
+                        final_lazada_prices = [tracker_map.get(ean_to_pim.get(normalize_sku(lazada_skus[i])), lazada_prices[i]) for i in range(len(df_lazada))]
                         df_lazada[lazada_price] = final_lazada_prices
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # 5. Process Zalora Channel Data
+                    # 5. Process Zalora Channel Data (Enforced Instant Lookups Architecture)
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         df_zalora_raw = read_full_file_standard(zalora_file)
                         df_zalora_raw.to_excel(writer, sheet_name="Direct Download From Zalora", index=False)
@@ -353,17 +355,18 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         working_flow_rows = []
                         final_to_upload_rows = []
                         
+                        # Ingest metrics into clean list dictionaries
                         zalora_records = df_zalora_raw.to_dict('records')
                         
                         for row_dict in zalora_records:
-                            sku = row_dict[temp_sku_col]
+                            sku = str(row_dict[temp_sku_col]).strip()
                             norm_sku = normalize_sku(sku)
                             
-                            # Optimized cascading check: ALU tree first, fallback to clean id matching
-                            pim = sku_to_pim_map.get(norm_sku) or clean_id_str(sku) if clean_id_str(sku) in rrp_map else None
+                            # CASCADING CATCH: Check direct structural ALU first, fallback instantly to normalized EAN hash map
+                            pim = alu_to_pim.get(sku) or ean_to_pim.get(norm_sku)
                             
                             # RULE 1: Item Not Found in Tracker
-                            if not pim:
+                            if not pim or pim not in rrp_map:
                                 row_dict.update({
                                     "ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False",
                                     "SRP/PH MD Price": "", "SRP check (K=E)": "False",
@@ -372,11 +375,11 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
-                            tracker_rrp_val = rrp_map.get(pim, 0)
-                            tracker_srp_val = tracker_map.get(pim, 0)
+                            tracker_rrp_val = rrp_map[pim]
+                            tracker_srp_val = tracker_map[pim]  # Directly assigned from tracker array matrix
                             
-                            current_rrp = pd.to_numeric(row_dict[zalora_orig], errors='coerce') or 0
-                            current_srp = pd.to_numeric(row_dict[zalora_promo], errors='coerce') or 0
+                            current_rrp = pd.to_numeric(row_dict[temp_rrp_col], errors='coerce') or 0
+                            current_srp = pd.to_numeric(row_dict[temp_srp_col], errors='coerce') or 0
                             
                             rrp_match = (tracker_rrp_val == current_rrp)
                             srp_match = (tracker_srp_val == current_srp)
@@ -398,19 +401,19 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
-                            # RULE 3: Month-End Sale
+                            # RULE 3: Month-End Sale Window Exception Check
                             if rrp_match and srp_match and is_last_day:
                                 row_dict["Comments"] = "All Good – Sale Ends at Month End. No Update Required."
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
-                            # RULE 4: Sale Price Mismatch
+                            # RULE 4: Sale Price Mismatch Pipeline
                             if rrp_match and not srp_match:
                                 if tracker_srp_val == 0:
-                                    row_dict.update({zalora_promo: "", zalora_start: "", zalora_end: "", "Comments": "Sale Price Updated."})
+                                    row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "Sale Price Updated."})
                                 else:
                                     row_dict.update({
-                                        zalora_promo: str(tracker_srp_val),
+                                        temp_srp_col: str(tracker_srp_val),
                                         zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
                                         "Comments": "Sale Price Updated."
                                     })
@@ -418,14 +421,14 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
                                 
-                            # RULE 5: RRP Mismatch
+                            # RULE 5: Base RRP Overwrite variance check conditions
                             if not rrp_match:
-                                row_dict[zalora_orig] = str(tracker_rrp_val)
+                                row_dict[temp_rrp_col] = str(tracker_rrp_val)
                                 if tracker_srp_val == 0:
-                                    row_dict.update({zalora_promo: "", zalora_start: "", zalora_end: "", "Comments": "RRP and Sale Price Updated."})
+                                    row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "RRP and Sale Price Updated."})
                                 else:
                                     row_dict.update({
-                                        zalora_promo: str(tracker_srp_val),
+                                        temp_srp_col: str(tracker_srp_val),
                                         zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
                                         "Comments": "RRP and Sale Price Updated."
                                     })
@@ -435,6 +438,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
 
                             working_flow_rows.append(row_dict)
 
+                        # Write rows out directly to excel sheets
                         pd.DataFrame(working_flow_rows).to_excel(writer, sheet_name="Working Flow", index=False)
                         
                         if final_to_upload_rows:
@@ -445,7 +449,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload sheet."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Performance optimizations applied cleanly across all input streams!")
+                st.success("🚀 Execution Instantaneous! Array scans completed smoothly.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
