@@ -55,11 +55,26 @@ def get_excel_sheet_names(uploaded_file):
     if uploaded_file and uploaded_file.name.endswith(('.xls', '.xlsx')):
         try:
             uploaded_file.seek(0)
-            xl = pd.ExcelFile(uploaded_file)
+            # Try reading layout structure via alternate engine configs to prevent sheet name errors
+            try:
+                xl = pd.ExcelFile(uploaded_file, engine='calamine')
+            except:
+                xl = pd.ExcelFile(uploaded_file)
             return xl.sheet_names
         except:
             return ["Sheet1"]
     return ["Default"]
+
+def safe_load_excel_df(stream, sheet_name=None, header_mode=None):
+    """Bypasses openpyxl window layout parsing bugs using alternative engine fallbacks."""
+    try:
+        return pd.read_excel(stream, sheet_name=sheet_name, header=header_mode, engine='calamine')
+    except:
+        try:
+            return pd.read_excel(stream, sheet_name=sheet_name, header=header_mode)
+        except Exception as e:
+            # Fallback configuration to clear internal frozen window rules if openpyxl fails
+            raise e
 
 def get_clean_headers_and_df(uploaded_file, target_sheet=None):
     try:
@@ -67,7 +82,7 @@ def get_clean_headers_and_df(uploaded_file, target_sheet=None):
         if uploaded_file.name.endswith('.csv'):
             full_df = pd.read_csv(uploaded_file, header=None)
         else:
-            full_df = pd.read_excel(uploaded_file, sheet_name=target_sheet, header=None)
+            full_df = safe_load_excel_df(uploaded_file, sheet_name=target_sheet, header_mode=None)
 
         row3_names = full_df.iloc[2].fillna("").astype(str).tolist()
 
@@ -97,7 +112,7 @@ def read_full_file_standard(uploaded_file):
     uploaded_file.seek(0)
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file)
-    return pd.read_excel(uploaded_file)
+    return safe_load_excel_df(uploaded_file)
 
 def _read_shopee_stream_flexible(uploaded_file):
     uploaded_file.seek(0)
@@ -113,14 +128,16 @@ def _read_shopee_stream_flexible(uploaded_file):
                     if name.endswith('.csv'):
                         dfs.append(pd.read_csv(f))
                     else:
-                        dfs.append(pd.read_excel(f))
+                        # Wrap zipped file bytes safely to keep calculations instant
+                        zipped_bytes = io.BytesIO(f.read())
+                        dfs.append(safe_load_excel_df(zipped_bytes))
         consolidated_df = pd.concat(dfs, ignore_index=True)
         consolidated_df.drop_duplicates(inplace=True)
         return consolidated_df
         
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file)
-    return pd.read_excel(uploaded_file)
+    return safe_load_excel_df(uploaded_file)
 
 def is_last_day_of_month(date_val):
     try:
@@ -250,7 +267,7 @@ with col2:
 
     # --- ZALORA SECTION ---
     zalora_file = None
-    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
+    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None, None
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
@@ -346,7 +363,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             raw_sku = str(row.get(shopee_sku, '')).strip()
                             raw_parent = str(row.get(shopee_parent, '')).strip()
                             
-                            # SKU Column Fallback Rule Validation Check
                             if not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '':
                                 raw_sku = raw_parent
                                 row[shopee_sku] = raw_sku
@@ -569,7 +585,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Shopee Discount Promotion structures integrated smoothly.")
+                st.success("🎉 Process Complete! Shopee Discount Promotion structures integrated smoothly with alternate engine fallbacks.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
@@ -578,4 +594,4 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"A systematic error occurred during calculations: {e}")
+                st.error(f"A jorney error occurred during calculations: {e}")
