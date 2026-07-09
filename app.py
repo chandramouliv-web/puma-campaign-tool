@@ -151,6 +151,13 @@ def _read_shopee_stream_flexible(uploaded_file):
         return pd.read_csv(uploaded_file)
     return safe_load_excel_df(uploaded_file)
 
+def _find_col(df, keyword_sets):
+    for kw in keyword_sets:
+        for c in df.columns:
+            if kw.lower() in str(c).strip().lower():
+                return c
+    return None
+
 def is_last_day_of_month(date_val):
     try:
         if pd.isna(date_val) or str(date_val).strip() == "":
@@ -179,7 +186,7 @@ with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_sheet = None
-    tracker_pim, tracker_rrp, tracker_md = None, None, None, None
+    tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
     
     if tracker_file:
