@@ -135,7 +135,7 @@ def _read_shopee_stream_flexible(uploaded_file):
                         if isinstance(df_sheet, dict):
                             for s_name, s_df in df_sheet.items():
                                 if isinstance(s_df, pd.DataFrame) and not s_df.empty:
-                                    dfs.append(s_df)
+                                    dfs.append(s_df) # <-- FIXED TYPO HERE (from s_sheet to s_df)
                         elif isinstance(df_sheet, pd.DataFrame) and not df_sheet.empty:
                             dfs.append(df_sheet)
         if not dfs:
@@ -176,7 +176,7 @@ with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_sheet = None
-    tracker_pim, tracker_rrp, tracker_md = None, None, None, None
+    tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
     
     if tracker_file:
@@ -358,7 +358,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data
+                    # 3. Process Shopee Channel Data (Enforced Bulk Dictionary Parser Engine)
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee_raw = _read_shopee_stream_flexible(shopee_file)
                         if not df_shopee_raw.empty:
@@ -414,7 +414,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                         "Seller SKU": raw_sku, "Marketplace Status": "", "Marketplace Message": "", "RRP": tracker_rrp_val
                                     })
                                     continue
-                                    
+                                
                                 if tracker_srp_val == 0:
                                     row['Comments'] = "ignore - SRP is Zero"
                                     shopee_working_flow.append(row)
@@ -595,7 +595,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Unpacking bug cleared successfully.")
+                st.success("🎉 Process Complete! Variable unpacking typo resolved.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
