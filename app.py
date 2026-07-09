@@ -80,6 +80,27 @@ def safe_load_excel_df(stream, sheet_name=None, header_mode=0):
         return res[first_key]
     return res
 
+def auto_detect_shopee_header(df):
+    """Locates the true Seller Centre orange header row dynamically and removes raw template metadata above it."""
+    for idx in range(min(15, len(df))):
+        row_str = df.iloc[idx].fillna("").astype(str).str.lower().str.strip().values
+        if any("product id" in r or "variation id" in r or "sku ref" in r or "parent sku" in r for r in row_str):
+            headers = df.iloc[idx].fillna("").astype(str).str.strip().values
+            clean_headers = []
+            for i, h in enumerate(headers):
+                if not h or h.lower() == "nan":
+                    clean_headers.append(f"Blank_Col_{i}")
+                else:
+                    clean_headers.append(h)
+            new_df = df.iloc[idx+1:].copy()
+            new_df.columns = clean_headers
+            return new_df.reset_index(drop=True)
+            
+    if len(df) > 0:
+        df.columns = [str(c).strip() for c in df.iloc[0].fillna("").values]
+        return df.iloc[1:].reset_index(drop=True)
+    return df
+
 def get_clean_headers_and_df(uploaded_file, target_sheet=None):
     try:
         uploaded_file.seek(0)
@@ -130,17 +151,13 @@ def _read_shopee_stream_flexible(uploaded_file):
             for name in names:
                 with zf.open(name) as f:
                     if name.endswith('.csv'):
-                        dfs.append(pd.read_csv(f))
+                        df = pd.read_csv(f, header=None)
                     else:
-                        zipped_bytes = io.BytesIO(f.read())
-                        df_sheet = safe_load_excel_df(zipped_bytes)
-                        
-                        if isinstance(df_sheet, dict):
-                            for s_name, s_df in df_sheet.items():
-                                if isinstance(s_df, pd.DataFrame) and not s_df.empty:
-                                    dfs.append(s_df)
-                        elif isinstance(df_sheet, pd.DataFrame) and not df_sheet.empty:
-                            dfs.append(df_sheet)
+                        df = safe_load_excel_df(io.BytesIO(f.read()), header_mode=None)
+                    
+                    df_cleaned = auto_detect_shopee_header(df)
+                    if isinstance(df_cleaned, pd.DataFrame) and not df_cleaned.empty:
+                        dfs.append(df_cleaned)
         if not dfs:
             return pd.DataFrame()
         consolidated_df = pd.concat(dfs, ignore_index=True)
@@ -148,8 +165,10 @@ def _read_shopee_stream_flexible(uploaded_file):
         return consolidated_df
         
     if uploaded_file.name.endswith('.csv'):
-        return pd.read_csv(uploaded_file)
-    return safe_load_excel_df(uploaded_file)
+        df = pd.read_csv(uploaded_file, header=None)
+    else:
+        df = safe_load_excel_df(uploaded_file, header_mode=None)
+    return auto_detect_shopee_header(df)
 
 def _find_col(df, keyword_sets):
     for kw in keyword_sets:
@@ -186,7 +205,7 @@ with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_sheet = None
-    tracker_pim, tracker_rrp, tracker_md = None, None, None
+    tracker_pim, tracker_rrp, tracker_md = None, None, None, None
     df_tracker = None
     
     if tracker_file:
