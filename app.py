@@ -42,7 +42,7 @@ def _apply_rounding_strategy(val, strategy_mode):
         elif strategy_mode == "Round":
             return round(f_val)
         else:
-            return round(f_val, 2) # Follow Exact Tracker Value (Preserves precision)
+            return round(f_val, 2)
     except:
         return 0
 
@@ -159,12 +159,10 @@ with col1:
     df_tracker = None
     
     if tracker_file:
-        # Dynamically discover all worksheet tabs present inside tracker binary stream
         if tracker_file.name.endswith(('.xlsx', '.xls')):
             t_sheets = get_excel_sheet_names(tracker_file)
             tracker_sheet = st.selectbox("Select Target Tracker Worksheet", t_sheets, key="t_sheet_selector")
         
-        # Core Session Caching Matrix Initialization
         if "tracker_round_prefs" not in st.session_state:
             st.session_state.tracker_round_prefs = {}
             
@@ -174,14 +172,12 @@ with col1:
             saved_pref = st.session_state.tracker_round_prefs[current_sheet_key]
             saved_pref_index = ["Follow Exact Tracker Value", "Round", "Round Up"].index(saved_pref)
 
-        # Dynamic Rounding Method Selection attached strictly to the current active worksheet
         sheet_rounding_strategy = st.selectbox(
             f"Select Price Rounding Method for Sheet [{tracker_sheet or 'Default'}]",
             ["Follow Exact Tracker Value", "Round", "Round Up"],
             index=saved_pref_index,
             key="sheet_rounding_dropdown"
         )
-        # Commit updated state preference instantly back to memory tree
         st.session_state.tracker_round_prefs[current_sheet_key] = sheet_rounding_strategy
             
         tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file, target_sheet=tracker_sheet)
@@ -307,7 +303,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
     if not error_found:
         with st.spinner("Executing system pipeline mappings..."):
             try:
-                # Ingest SKU file entries safely as plain arrays
                 df_sku = read_full_file_standard(sku_file)
                 sku_raw_arr = df_sku[sku_sku].astype(str).values
                 pim_raw_arr = df_sku[sku_pim].astype(str).values
@@ -323,7 +318,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     if norm_s: ean_to_pim[norm_s] = pim_clean
                     if raw_s: alu_to_pim[raw_s] = pim_clean
 
-                # Parse Tracker values utilizing the worksheet specific rounding preference rules
                 tracker_map = {}
                 rrp_map = {}
                 
@@ -337,7 +331,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     tracker_map[pim_val] = _apply_rounding_strategy(md_tracker_raw[t_idx], sheet_rounding_strategy)
                     rrp_map[pim_val] = _apply_rounding_strategy(rrp_tracker_raw[t_idx], sheet_rounding_strategy)
 
-                # Combine maps for Shopee lookups
                 shopee_price_map = {}
                 sku_to_pim_map = {}
                 for norm_sku, pim_val in ean_to_pim.items():
@@ -347,13 +340,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
 
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                    
-                    pd.DataFrame([{
-                        "Run Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Automation Mode Selection": mode,
-                        "Active Worksheet": tracker_sheet or "Default",
-                        "Enforced Rounding Policy": sheet_rounding_strategy
-                    }]).to_excel(writer, sheet_name="Dashboard_Summary", index=False)
                     
                     # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
@@ -450,7 +436,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             norm_sku = normalize_sku(sku)
                             pim = alu_to_pim.get(sku) or ean_to_pim.get(norm_sku)
                             
-                            # RULE 1: Ignore – Item Not Found in Tracker
                             if not pim or pim not in rrp_map:
                                 row_dict.update({
                                     "ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False",
@@ -472,7 +457,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             has_no_dates = pd.isna(row_dict[zalora_start]) or str(row_dict[zalora_start]).strip() == ""
                             is_last_day = is_last_day_of_month(row_dict[zalora_end])
                             
-                            # RULE 2: No Changes Required
                             if initial_rrp_match and initial_srp_match and has_no_dates:
                                 row_dict.update({
                                     "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
@@ -482,7 +466,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
-                            # RULE 3: Month-End Sale
                             if initial_rrp_match and initial_srp_match and is_last_day:
                                 try:
                                     existing_end_dt = pd.to_datetime(row_dict[zalora_end])
@@ -511,7 +494,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 except:
                                     pass
                                 
-                            # RULE 4: Sale Price Mismatch
                             if initial_rrp_match and not initial_srp_match:
                                 if tracker_srp_val == 0:
                                     row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "Sale Price Updated."})
@@ -533,7 +515,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
                                 
-                            # RULE 5: RRP Mismatch
                             if not initial_rrp_match:
                                 row_dict[temp_rrp_col] = str(tracker_rrp_val)
                                 if tracker_srp_val == 0:
@@ -568,7 +549,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Rounding strategy state loaded per worksheet accurately.")
+                st.success("🎉 Process Complete! File compiled cleanly without the Dashboard summary sheet.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
