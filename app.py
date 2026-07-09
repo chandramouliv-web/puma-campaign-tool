@@ -55,7 +55,6 @@ def get_excel_sheet_names(uploaded_file):
     if uploaded_file and uploaded_file.name.endswith(('.xls', '.xlsx')):
         try:
             uploaded_file.seek(0)
-            # Try reading layout structure via alternate engine configs to prevent sheet name errors
             try:
                 xl = pd.ExcelFile(uploaded_file, engine='calamine')
             except:
@@ -65,16 +64,21 @@ def get_excel_sheet_names(uploaded_file):
             return ["Sheet1"]
     return ["Default"]
 
-def safe_load_excel_df(stream, sheet_name=None, header_mode=None):
-    """Bypasses openpyxl window layout parsing bugs using alternative engine fallbacks."""
+def safe_load_excel_df(stream, sheet_name=None, header_mode=0):
+    """Bypasses openpyxl structure errors safely and returns a valid DataFrame."""
     try:
-        return pd.read_excel(stream, sheet_name=sheet_name, header=header_mode, engine='calamine')
+        res = pd.read_excel(stream, sheet_name=sheet_name, header=header_mode, engine='calamine')
     except:
-        try:
-            return pd.read_excel(stream, sheet_name=sheet_name, header=header_mode)
-        except Exception as e:
-            # Fallback configuration to clear internal frozen window rules if openpyxl fails
-            raise e
+        res = pd.read_excel(stream, sheet_name=sheet_name, header=header_mode)
+    
+    # If a sheet name wasn't specified, read_excel might return a dict of sheets
+    if isinstance(res, dict):
+        if not res:
+            return pd.DataFrame()
+        # Return the first sheet's DataFrame
+        first_key = list(res.keys())[0]
+        return res[first_key]
+    return res
 
 def get_clean_headers_and_df(uploaded_file, target_sheet=None):
     try:
@@ -128,9 +132,13 @@ def _read_shopee_stream_flexible(uploaded_file):
                     if name.endswith('.csv'):
                         dfs.append(pd.read_csv(f))
                     else:
-                        # Wrap zipped file bytes safely to keep calculations instant
                         zipped_bytes = io.BytesIO(f.read())
-                        dfs.append(safe_load_excel_df(zipped_bytes))
+                        # Standardize to a single DataFrame sheet from the zipped sub-file
+                        df_sheet = safe_load_excel_df(zipped_bytes)
+                        if not df_sheet.empty:
+                            dfs.append(df_sheet)
+        if not dfs:
+            return pd.DataFrame()
         consolidated_df = pd.concat(dfs, ignore_index=True)
         consolidated_df.drop_duplicates(inplace=True)
         return consolidated_df
@@ -349,7 +357,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data (Enforced Bulk Dictionary Parser Engine)
+                    # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee_raw = _read_shopee_stream_flexible(shopee_file)
                         df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
@@ -585,7 +593,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Shopee Discount Promotion structures integrated smoothly with alternate engine fallbacks.")
+                st.success("🎉 Process Complete! Shopee Discount Promotion structures integrated smoothly with dictionary layout handling corrections.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
@@ -594,4 +602,4 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"A jorney error occurred during calculations: {e}")
+                st.error(f"A systematic error occurred during calculations: {e}")
