@@ -65,17 +65,15 @@ def get_excel_sheet_names(uploaded_file):
     return ["Default"]
 
 def safe_load_excel_df(stream, sheet_name=None, header_mode=0):
-    """Bypasses openpyxl structure errors safely and returns a valid DataFrame."""
+    """Bypasses openpyxl structural layout crash paths using fallback calamine filters."""
     try:
         res = pd.read_excel(stream, sheet_name=sheet_name, header=header_mode, engine='calamine')
     except:
         res = pd.read_excel(stream, sheet_name=sheet_name, header=header_mode)
     
-    # If a sheet name wasn't specified, read_excel might return a dict of sheets
     if isinstance(res, dict):
         if not res:
             return pd.DataFrame()
-        # Return the first sheet's DataFrame
         first_key = list(res.keys())[0]
         return res[first_key]
     return res
@@ -133,9 +131,9 @@ def _read_shopee_stream_flexible(uploaded_file):
                         dfs.append(pd.read_csv(f))
                     else:
                         zipped_bytes = io.BytesIO(f.read())
-                        # Standardize to a single DataFrame sheet from the zipped sub-file
                         df_sheet = safe_load_excel_df(zipped_bytes)
-                        if not df_sheet.empty:
+                        # Explicit type verification safeguard
+                        if isinstance(df_sheet, pd.DataFrame) and not df_sheet.empty:
                             dfs.append(df_sheet)
         if not dfs:
             return pd.DataFrame()
@@ -360,83 +358,84 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee_raw = _read_shopee_stream_flexible(shopee_file)
-                        df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
-                        
-                        shopee_working_flow = []
-                        shopee_mismatches = []
-                        shopee_final_uploads = []
-                        
-                        shopee_records = df_shopee_raw.to_dict('records')
-                        for row in shopee_records:
-                            raw_sku = str(row.get(shopee_sku, '')).strip()
-                            raw_parent = str(row.get(shopee_parent, '')).strip()
+                        if not df_shopee_raw.empty:
+                            df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
                             
-                            if not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '':
-                                raw_sku = raw_parent
-                                row[shopee_sku] = raw_sku
+                            shopee_working_flow = []
+                            shopee_mismatches = []
+                            shopee_final_uploads = []
+                            
+                            shopee_records = df_shopee_raw.to_dict('records')
+                            for row in shopee_records:
+                                raw_sku = str(row.get(shopee_sku, '')).strip()
+                                raw_parent = str(row.get(shopee_parent, '')).strip()
                                 
-                            if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
+                                if not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '':
+                                    raw_sku = raw_parent
+                                    row[shopee_sku] = raw_sku
+                                    
+                                if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
+                                    row.update({
+                                        "ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "",
+                                        "Comments": "Missing SKU and Parent SKU."
+                                    })
+                                    shopee_working_flow.append(row)
+                                    continue
+                                    
+                                norm_sku = normalize_sku(raw_sku)
+                                pim = ean_to_pim.get(norm_sku) or alu_to_pim.get(raw_sku)
+                                
+                                if not pim or pim not in rrp_map:
+                                    row.update({
+                                        "ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "",
+                                        "Comments": "Ignore – Item Not Found in Tracker."
+                                    })
+                                    shopee_working_flow.append(row)
+                                    continue
+                                    
+                                tracker_rrp_val = rrp_map[pim]
+                                tracker_srp_val = tracker_map[pim]
+                                current_price = _to_numeric_safe(row.get(shopee_orig, 0), sheet_rounding_strategy)
+                                
+                                rrp_match = (tracker_rrp_val == current_price)
+                                
                                 row.update({
-                                    "ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "",
-                                    "Comments": "Missing SKU and Parent SKU."
+                                    "ALU_NO": str(pim), "RRP": str(tracker_rrp_val),
+                                    "RRP Check": str(rrp_match), "SRP": str(tracker_srp_val)
                                 })
-                                shopee_working_flow.append(row)
-                                continue
                                 
-                            norm_sku = normalize_sku(raw_sku)
-                            pim = ean_to_pim.get(norm_sku) or alu_to_pim.get(raw_sku)
-                            
-                            if not pim or pim not in rrp_map:
-                                row.update({
-                                    "ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "",
-                                    "Comments": "Ignore – Item Not Found in Tracker."
-                                })
-                                shopee_working_flow.append(row)
-                                continue
+                                if not rrp_match:
+                                    row['Comments'] = "RRP Mismatch"
+                                    shopee_working_flow.append(row)
+                                    shopee_mismatches.append({
+                                        "Seller SKU": raw_sku, "Marketplace Status": "", "Marketplace Message": "", "RRP": tracker_rrp_val
+                                    })
+                                    continue
+                                    
+                                if tracker_srp_val == 0:
+                                    row['Comments'] = "ignore - SRP is Zero"
+                                    shopee_working_flow.append(row)
+                                    continue
                                 
-                            tracker_rrp_val = rrp_map[pim]
-                            tracker_srp_val = tracker_map[pim]
-                            current_price = _to_numeric_safe(row.get(shopee_orig, 0), sheet_rounding_strategy)
-                            
-                            rrp_match = (tracker_rrp_val == current_price)
-                            
-                            row.update({
-                                "ALU_NO": str(pim), "RRP": str(tracker_rrp_val),
-                                "RRP Check": str(rrp_match), "SRP": str(tracker_srp_val)
-                            })
-                            
-                            if not rrp_match:
-                                row['Comments'] = "RRP Mismatch"
-                                shopee_working_flow.append(row)
-                                shopee_mismatches.append({
-                                    "Seller SKU": raw_sku, "Marketplace Status": "", "Marketplace Message": "", "RRP": tracker_rrp_val
-                                })
-                                continue
+                                row['Comments'] = "RRP is true and SRP is not equal to RRP - To be in Upload File"
+                                row[shopee_promo] = tracker_srp_val
+                                if shopee_start: row[shopee_start] = shopee_start_str
+                                if shopee_end: row[shopee_end] = shopee_end_str
                                 
-                            if tracker_srp_val == 0:
-                                row['Comments'] = "ignore - SRP is Zero"
                                 shopee_working_flow.append(row)
-                                continue
+                                shopee_final_uploads.append(row.copy())
                                 
-                            row['Comments'] = "RRP is true and SRP is not equal to RRP - To be in Upload File"
-                            row[shopee_promo] = tracker_srp_val
-                            if shopee_start: row[shopee_start] = shopee_start_str
-                            if shopee_end: row[shopee_end] = shopee_end_str
+                            pd.DataFrame(shopee_working_flow).to_excel(writer, sheet_name="Working File", index=False)
                             
-                            shopee_working_flow.append(row)
-                            shopee_final_uploads.append(row.copy())
+                            df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
+                            df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
-                        pd.DataFrame(shopee_working_flow).to_excel(writer, sheet_name="Working File", index=False)
-                        
-                        df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
-                        df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
-                        
-                        if shopee_final_uploads:
-                            df_sh_upload = pd.DataFrame(shopee_final_uploads)
-                            drop_cols = ['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments']
-                            df_sh_upload.drop(columns=drop_cols, errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
-                        else:
-                            pd.DataFrame([{"Message": "All entries skipped based on filtering rules."}]).to_excel(writer, sheet_name="To Upload", index=False)
+                            if shopee_final_uploads:
+                                df_sh_upload = pd.DataFrame(shopee_final_uploads)
+                                drop_cols = ['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments']
+                                df_sh_upload.drop(columns=drop_cols, errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
+                            else:
+                                pd.DataFrame([{"Message": "All entries skipped based on filtering rules."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                     # 4. Process Lazada Channel Data
                     if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
@@ -593,7 +592,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Shopee Discount Promotion structures integrated smoothly with dictionary layout handling corrections.")
+                st.success("🎉 Process Complete! Zipped collections handled cleanly with data-type checks enabled.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
