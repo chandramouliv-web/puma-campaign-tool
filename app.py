@@ -5,6 +5,7 @@ import re
 import zipfile
 import math
 from datetime import datetime, time
+import openpyxl
 from openpyxl.styles import PatternFill, Font, Border, Alignment
 from openpyxl.utils import get_column_letter
 
@@ -278,7 +279,7 @@ with col2:
 
     # --- ZALORA SECTION ---
     zalora_file = None
-    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None, None
+    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
@@ -435,7 +436,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
                             df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
-                            # Build Final Cleaned Shopee Upload File Sheet with Orange Formatting Applied Natively
+                            # Clean metadata row markers above header row 
                             if shopee_final_uploads:
                                 df_sh_upload = pd.DataFrame(shopee_final_uploads)
                                 drop_cols = ['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments']
@@ -597,20 +598,23 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         else:
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
-                # Post-Processing Style Override Engine: Enforce Orange formatting onto Row 1 of Shopee To Upload tab
+                # =========================================================
+                # 🎨 POST-PROCESSING STYLE ENGINE: ENFORCE EX_ORANGE FORMATTING
+                # =========================================================
                 output_buffer.seek(0)
                 if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
-                    import openpyxl
                     wb = openpyxl.load_workbook(output_buffer)
                     if "To Upload" in wb.sheetnames:
                         ws = wb["To Upload"]
-                        # Establish Shopee explicit brand visual design criteria matrices
+                        
+                        # Define the strict orange theme properties
                         orange_fill = PatternFill(start_color="FF5722", end_color="FF5722", fill_type="solid")
                         white_bold_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
                         thin_side = openpyxl.styles.Side(style='thin', color='CCCCCC')
                         clean_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
                         center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
                         
+                        # Apply styles exclusively to Row 1
                         ws.row_dimensions[1].height = 28
                         for col_idx in range(1, ws.max_column + 1):
                             cell = ws.cell(row=1, column=col_idx)
@@ -619,18 +623,18 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             cell.border = clean_border
                             cell.alignment = center_align
                         
-                        # Dynamic layout sheet dimensions auto-fitter routine step
+                        # Dynamically auto-fit column content widths
                         for col in ws.columns:
                             max_len = max(len(str(cell.value or '')) for cell in col)
                             col_letter = get_column_letter(col[0].column)
-                            ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+                            ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
                             
                     new_buffer = io.BytesIO()
                     wb.save(new_buffer)
                     output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Orange template branding injected natively into Shopee row 1.")
+                st.success("🎉 Process Complete! Clean orange header formatted successfully on Row 1.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
