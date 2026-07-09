@@ -153,11 +153,15 @@ def _read_shopee_stream_flexible(uploaded_file):
                     if name.endswith('.csv'):
                         df = pd.read_csv(f, header=None)
                     else:
-                        df = safe_load_excel_df(io.BytesIO(f.read()), header_mode=None)
-                    
-                    df_cleaned = auto_detect_shopee_header(df)
-                    if isinstance(df_cleaned, pd.DataFrame) and not df_cleaned.empty:
-                        dfs.append(df_cleaned)
+                        zipped_bytes = io.BytesIO(f.read())
+                        df_sheet = safe_load_excel_df(zipped_bytes, header_mode=None)
+                        
+                        if isinstance(df_sheet, dict):
+                            for s_name, s_df in df_sheet.items():
+                                if isinstance(s_df, pd.DataFrame) and not s_df.empty:
+                                    dfs.append(s_df)
+                        elif isinstance(df_sheet, pd.DataFrame) and not df_sheet.empty:
+                            dfs.append(df_sheet)
         if not dfs:
             return pd.DataFrame()
         consolidated_df = pd.concat(dfs, ignore_index=True)
@@ -205,7 +209,7 @@ with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_sheet = None
-    tracker_pim, tracker_rrp, tracker_md = None, None, None # <-- FIXED: REMOVED THE EXTRA NONE VALUE HERE
+    tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
     
     if tracker_file:
@@ -371,7 +375,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data
+                    # 3. Process Shopee Channel Data (Enforced Bulk Dictionary Parser Engine)
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         df_shopee_raw = _read_shopee_stream_flexible(shopee_file)
                         if not df_shopee_raw.empty:
