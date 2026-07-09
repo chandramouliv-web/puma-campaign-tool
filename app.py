@@ -10,7 +10,7 @@ from datetime import datetime, time
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
 
 # =================================================================
-# ⚙️ HIGH-PERFORMANCE PLUGINS & UTILITIES
+# ⚙️ HIGH-PERFORMANCE DATA ENGINE
 # =================================================================
 
 def normalize_sku(sku):
@@ -29,6 +29,12 @@ def clean_id_str(val):
     return s if s != "nan" else ""
 
 def _apply_rounding_strategy(val, strategy_mode):
+    """
+    Applies custom regional price adjustments based on dropdown choices:
+    - 'Conditional Round (> 0.50 Round Up)': Standard floor <= 0.50, ceiling > 0.50
+    - 'Strict Round Up (Ceiling)': Always forces fractional decimals up
+    - 'Follow Exact Tracker Value': Leaves numbers as direct floats
+    """
     try:
         f_val = float(val)
         if strategy_mode == "Strict Round Up (Ceiling)":
@@ -52,24 +58,13 @@ def _to_numeric_safe(val, strategy_mode):
     except:
         return 0
 
-def get_excel_sheet_names(uploaded_file):
-    """Safely extracts sheet names if the file is an Excel workbook."""
-    if uploaded_file and uploaded_file.name.endswith(('.xls', '.xlsx')):
-        try:
-            uploaded_file.seek(0)
-            xl = pd.ExcelFile(uploaded_file)
-            return xl.sheet_names
-        except:
-            return ["Sheet1"]
-    return ["Default"]
-
-def get_clean_headers_and_df(uploaded_file, target_sheet=None):
+def get_clean_headers_and_df(uploaded_file):
     try:
         uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
             full_df = pd.read_csv(uploaded_file, header=None)
         else:
-            full_df = pd.read_excel(uploaded_file, sheet_name=target_sheet, header=None)
+            full_df = pd.read_excel(uploaded_file, header=None)
 
         row3_names = full_df.iloc[2].fillna("").astype(str).tolist()
 
@@ -95,11 +90,11 @@ def get_clean_headers_and_df(uploaded_file, target_sheet=None):
         st.error(f"Error processing layout headers from {uploaded_file.name}: {e}")
         return [], None
 
-def read_full_file_standard(uploaded_file, target_sheet=None):
+def read_full_file_standard(uploaded_file):
     uploaded_file.seek(0)
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file)
-    return pd.read_excel(uploaded_file, sheet_name=target_sheet)
+    return pd.read_excel(uploaded_file)
 
 def _read_shopee_zip(uploaded_file):
     dfs = []
@@ -136,7 +131,7 @@ def is_last_day_of_month(date_val):
 # 🎨 STREAMLIT INTERACTIVE UI
 # ==========================================
 st.title("🚀 Marketplace Price Automator")
-st.write("Upload your structural files, map tabs, link columns dynamically, and generate multi-sheet pricing exports.")
+st.write("Upload your structural files, map columns dynamically, and generate unified multi-sheet pricing exports.")
 
 mode = st.selectbox(
     "Select Automation Mode",
@@ -150,16 +145,11 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
-    tracker_sheet = None
     tracker_pim, tracker_rrp, tracker_md = None, None, None
     df_tracker = None
     
     if tracker_file:
-        if tracker_file.name.endswith(('.xlsx', '.xls')):
-            t_sheets = get_excel_sheet_names(tracker_file)
-            tracker_sheet = st.selectbox("Select Tracker Excel Tab", t_sheets, key="t_sheet_drop")
-            
-        tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file, target_sheet=tracker_sheet)
+        tracker_headers, df_tracker = get_clean_headers_and_df(tracker_file)
         if df_tracker is not None:
             st.success("💡 Cleaned tracking headers via specified index layout rules.")
             tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
@@ -169,15 +159,10 @@ with col1:
     st.markdown("---")
 
     sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
-    sku_sheet = None
     sku_sku, sku_pim = None, None
     if sku_file:
-        if sku_file.name.endswith(('.xlsx', '.xls')):
-            s_sheets = get_excel_sheet_names(sku_file)
-            sku_sheet = st.selectbox("Select SKU Map Excel Tab", s_sheets, key="s_sheet_drop")
-            
         try:
-            sku_headers = list(read_full_file_standard(sku_file, target_sheet=sku_sheet).columns)
+            sku_headers = list(read_full_file_standard(sku_file).columns)
             st.info("💡 Auto-suggesting mappings from your SKU Map columns.")
             
             def_sku_idx = sku_headers.index("EAN") if "EAN" in sku_headers else 0
@@ -234,18 +219,13 @@ with col2:
 
     # --- LAZADA SECTION ---
     lazada_file = None
-    lazada_sheet = None
     lazada_sku, lazada_price = None, None
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
         if mode == "🔄 Run All Marketplace Channels": st.markdown("---")
         lazada_file = st.file_uploader("4. Upload Lazada Master Template (.csv, .xlsx)", type=["csv", "xlsx"])
         if lazada_file:
-            if lazada_file.name.endswith(('.xlsx', '.xls')):
-                lz_sheets = get_excel_sheet_names(lazada_file)
-                lazada_sheet = st.selectbox("Select Lazada Excel Tab", lz_sheets, key="lz_sheet_drop")
-                
             try:
-                lazada_headers = list(read_full_file_standard(lazada_file, target_sheet=lazada_sheet).columns)
+                lazada_headers = list(read_full_file_standard(lazada_file).columns)
                 lazada_sku = st.selectbox("Map Lazada Seller SKU Column", [""] + lazada_headers, key="lz_sku")
                 lazada_price = st.selectbox("Map Lazada Special/Campaign Price Column", [""] + lazada_headers, key="lz_price")
             except Exception as e:
@@ -253,7 +233,6 @@ with col2:
 
     # --- ZALORA SECTION ---
     zalora_file = None
-    zalora_sheet = None
     zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
@@ -261,12 +240,8 @@ with col2:
         zalora_file = st.file_uploader("5. Upload Master Zalora Price Template (.xlsx)", type=["xlsx"], key="zal_master")
         
         if zalora_file:
-            if zalora_file.name.endswith(('.xlsx', '.xls')):
-                zal_sheets = get_excel_sheet_names(zalora_file)
-                zalora_sheet = st.selectbox("Select Zalora Target Upload Excel Tab", zal_sheets, key="zal_sheet_drop")
-                
             try:
-                zalora_headers = list(read_full_file_standard(zalora_file, target_sheet=zalora_sheet).columns)
+                zalora_headers = list(read_full_file_standard(zalora_file).columns)
                 zalora_sku = st.selectbox("Map Zalora SKU Column (e.g. SellerSku)", [""] + zalora_headers, key="zal_sku")
                 zalora_promo = st.selectbox("Map Zalora Sale Price Column (e.g. SalePrice)", [""] + zalora_headers, key="zal_promo")
                 zalora_orig = st.selectbox("Map Zalora RRP Price Column (e.g. Price)", [""] + zalora_headers, key="zal_orig")
@@ -308,7 +283,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         with st.spinner("Executing system pipeline mappings..."):
             try:
                 # 1. High Performance In-Memory SKU Mapping Ingestion
-                df_sku = read_full_file_standard(sku_file, target_sheet=sku_sheet)
+                df_sku = read_full_file_standard(sku_file)
                 sku_raw_arr = df_sku[sku_sku].astype(str).values
                 pim_raw_arr = df_sku[sku_pim].astype(str).values
                 
@@ -407,9 +382,9 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         if upload_rows:
                             pd.DataFrame(upload_rows).drop(columns=['QC Comment'], errors='ignore').to_excel(writer, sheet_name="Shopee_Upload", index=False)
 
-                    # 4. Process Lazada Channel Data
+                    # 4. Process Lazada Channel Data (Enforced Campaign Price Rule Matrix)
                     if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
-                        df_lazada = read_full_file_standard(lazada_file, target_sheet=lazada_sheet)
+                        df_lazada = read_full_file_standard(lazada_file)
                         lazada_skus = df_lazada[lazada_sku].values
                         lazada_prices = df_lazada[lazada_price].values
                         
@@ -422,6 +397,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 tracker_rrp_val = rrp_map[pim]
                                 tracker_srp_val = tracker_map[pim]
                                 
+                                # If Tracker SRP == 0, use RRP based on strategy, else use SRP directly
                                 computed_campaign_price = _apply_rounding_strategy(tracker_rrp_val, selected_strategy) if tracker_srp_val == 0 else _apply_rounding_strategy(tracker_srp_val, selected_strategy)
                                 final_lazada_prices.append(computed_campaign_price)
                             else:
@@ -432,7 +408,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
 
                     # 5. Process Zalora Channel Data
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
-                        df_zalora_raw = read_full_file_standard(zalora_file, target_sheet=zalora_sheet)
+                        df_zalora_raw = read_full_file_standard(zalora_file)
                         df_zalora_raw.to_excel(writer, sheet_name="Direct Download From Zalora", index=False)
                         
                         temp_sku_col = _find_col(df_zalora_raw, ["sku", "item", "sellersku"]) or df_zalora_raw.columns[0]
@@ -451,6 +427,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             
                             pim = alu_to_pim.get(sku) or ean_to_pim.get(norm_sku)
                             
+                            # RULE 1: Ignore – Item Not Found in Tracker
                             if not pim or pim not in rrp_map:
                                 row_dict.update({
                                     "ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False",
@@ -472,6 +449,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             has_no_dates = pd.isna(row_dict[zalora_start]) or str(row_dict[zalora_start]).strip() == ""
                             is_last_day = is_last_day_of_month(row_dict[zalora_end])
                             
+                            # RULE 2: No Changes Required
                             if initial_rrp_match and initial_srp_match and has_no_dates:
                                 row_dict.update({
                                     "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
@@ -481,6 +459,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
+                            # RULE 3: Month-End Sale Evaluation Matrix
                             if initial_rrp_match and initial_srp_match and is_last_day:
                                 try:
                                     existing_end_dt = pd.to_datetime(row_dict[zalora_end])
@@ -509,6 +488,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 except:
                                     pass
                                 
+                            # RULE 4: Sale Price Mismatch Pipeline
                             if initial_rrp_match and not initial_srp_match:
                                 if tracker_srp_val == 0:
                                     row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "Sale Price Updated."})
@@ -530,6 +510,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
                                 
+                            # RULE 5: RRP Mismatch Overwrite
                             if not initial_rrp_match:
                                 row_dict[temp_rrp_col] = str(tracker_rrp_val)
                                 if tracker_srp_val == 0:
@@ -564,7 +545,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
-                st.success("🎉 Multi-tab evaluation completed instantly!")
+                st.success(f"🎉 Process Complete! Regional adjustments loaded safely for [{target_region}].")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
