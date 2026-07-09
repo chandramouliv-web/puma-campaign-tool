@@ -3,7 +3,7 @@ import pandas as pd
 import io
 import re
 import zipfile
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 
 # Set up page configuration
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
@@ -86,6 +86,15 @@ def _find_col(df, *keyword_sets):
             cl = str(c).strip().lower()
             if any(kw in cl for kw in kws): return c
     return None
+
+def is_last_day_of_month(date_val):
+    try:
+        if pd.isna(date_val) or str(date_val).strip() == "":
+            return False
+        dt = pd.to_datetime(date_val)
+        return dt.day == dt.days_in_month
+    except:
+        return False
 
 # ==========================================
 # 🎨 STREAMLIT INTERACTIVE UI
@@ -234,7 +243,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
             try:
                 df_sku = read_full_file_standard(sku_file)
                 
-                # 1. Parse Tracker Dictionary Mapping (Optimized Vectorized Intake)
+                # 1. Parse Tracker Dictionary Mapping
                 tracker_map = {}
                 rrp_map = {}
                 for idx, row in df_tracker.iterrows():
@@ -256,13 +265,14 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         sku_to_pim[norm_sku] = pim
 
                 output_buffer = io.BytesIO()
+                
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # Core Fallback Dashboard Tab
+                    # Dashboard Fallback sheet to ensure safety
                     pd.DataFrame([{
                         "Run Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "Automation Mode Selection": mode,
-                        "Status Pipeline": "Processed Successfully"
+                        "Status Pipeline": "Processed Cleanly"
                     }]).to_excel(writer, sheet_name="Dashboard_Summary", index=False)
                     
                     # 3. Process Shopee Channel Data
@@ -326,32 +336,26 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_lazada.at[idx, lazada_price] = price_map.get(norm_sku, existing_price)
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # 5. Process Zalora Channel Data (Highly Optimized Memory Loop)
+                    # 5. Process Zalora Channel Data (Enforced 4-Rule Architecture)
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         df_zalora_raw = read_full_file_standard(zalora_file)
                         df_zalora_raw.to_excel(writer, sheet_name="Direct Download From Zalora", index=False)
                         
-                        # Set dynamic mapping hooks
-                        temp_sku_col = _find_col(df_zalora_raw, ["sku", "item", "sellersku"]) or df_zalora_raw.columns[0]
-                        temp_rrp_col = _find_col(df_zalora_raw, ["price", "rrp", "original"]) or df_zalora_raw.columns[1]
-                        temp_srp_col = _find_col(df_zalora_raw, ["saleprice", "srp", "sale"]) or df_zalora_raw.columns[2]
-                        
-                        # Prepare ultra-fast bulk lists for column compilation
                         working_flow_rows = []
                         final_to_upload_rows = []
                         
                         for idx, row in df_zalora_raw.iterrows():
                             row_dict = row.to_dict()
-                            sku = row_dict[temp_sku_col]
+                            sku = row_dict[zalora_sku]
                             norm_sku = normalize_sku(sku)
                             pim = sku_to_pim.get(norm_sku)
                             
-                            # Rule 4: Strip rows returning mapping drops (#N/A)
+                            # RULE 1: Ignore records not matched inside Tracker
                             if not pim or norm_sku not in price_map or pd.isna(pim):
                                 row_dict.update({
                                     "ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False",
                                     "SRP/PH MD Price": "", "SRP check (K=E)": "False",
-                                    "Comments": "Removed record: Missing structural mapping entries (#N/A)"
+                                    "Comments": "Rule 1 Excluded: Missing lookup parameters inside Tracker (#N/A)"
                                 })
                                 working_flow_rows.append(row_dict)
                                 continue
@@ -370,46 +374,47 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 "SRP check (K=E)": str(srp_match)
                             })
                             
-                            # Rule 3: Clear sale dimensions if value drops to 0
-                            if tracker_srp_val == 0:
-                                row_dict.update({zalora_promo: "", zalora_start: "", zalora_end: "", "Comments": "Remove Sale: Tracker SRP is 0"})
-                                working_flow_rows.append(row_dict)
-                                final_to_upload_rows.append(row_dict.copy())
-                                continue
-                                
-                            # Rule 1: No Price Changes validation logic
-                            if rrp_match and srp_match:
-                                row_dict["Comments"] = "All Good – Both RRP and SRP Match the Tracker Prices."
-                                try:
-                                    parsed_end = pd.to_datetime(row_dict[zalora_end])
-                                    if parsed_end < datetime.now() + timedelta(days=30):
-                                        row_dict[zalora_start] = str(zalora_start_str)
-                                        row_dict[zalora_end] = str(zalora_end_str)
-                                        row_dict["Comments"] += " Extended short campaign window."
-                                        # Include because dates require modification
-                                        final_to_upload_rows.append(row_dict.copy())
-                                    else:
-                                        # CRITICAL CHANGE: Exclude from upload sheet if price matches and dates do not need updates
-                                        pass
-                                except:
-                                    row_dict[zalora_start] = str(zalora_start_str)
-                                    row_dict[zalora_end] = str(zalora_end_str)
-                                    final_to_upload_rows.append(row_dict.copy())
+                            # RULE 2: No Changes Required Checklist
+                            has_no_dates = pd.isna(row_dict[zalora_start]) or str(row_dict[zalora_start]).strip() == ""
+                            is_last_day = is_last_day_of_month(row_dict[zalora_end])
                             
-                            # Rules 2 & 5: Apply price modifications
-                            else:
-                                row_dict.update({
-                                    zalora_orig: str(tracker_rrp_val), zalora_promo: str(tracker_srp_val),
-                                    zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
-                                    "Comments": "Price updated to match tracker metrics."
-                                })
+                            if rrp_match and srp_match and (has_no_dates or is_last_day):
+                                row_dict["Comments"] = "Rule 2 Excluded: Live parameters match tracker values perfectly."
+                                working_flow_rows.append(row_dict)
+                                continue
+                                
+                            # RULE 3: RRP Matches, Sale Price Mismatch
+                            if rrp_match and not srp_match:
+                                if tracker_srp_val == 0:
+                                    row_dict.update({zalora_promo: "", zalora_start: "", zalora_end: "", "Comments": "Rule 3 Included: Dropped sale pricing because tracker SRP is 0"})
+                                else:
+                                    row_dict.update({
+                                        zalora_promo: str(tracker_srp_val),
+                                        zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
+                                        "Comments": "Rule 3 Included: Updated promo price criteria to match tracking framework."
+                                    })
                                 working_flow_rows.append(row_dict)
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
                                 
+                            # RULE 4: RRP Mismatch
+                            if not rrp_match:
+                                row_dict[zalora_orig] = str(tracker_rrp_val)
+                                if tracker_srp_val == 0:
+                                    row_dict.update({zalora_promo: "", zalora_start: "", zalora_end: "", "Comments": "Rule 4 Included: Refactored RRP metrics and dropped active sale criteria."})
+                                else:
+                                    row_dict.update({
+                                        zalora_promo: str(tracker_srp_val),
+                                        zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
+                                        "Comments": "Rule 4 Included: Overrode base RRP value and initialized new promo windows."
+                                    })
+                                working_flow_rows.append(row_dict)
+                                final_to_upload_rows.append(row_dict.copy())
+                                continue
+
                             working_flow_rows.append(row_dict)
 
-                        # Write sheets instantly from structured list dict objects
+                        # Write sheets to output stream
                         pd.DataFrame(working_flow_rows).to_excel(writer, sheet_name="Working Flow", index=False)
                         
                         if final_to_upload_rows:
@@ -417,7 +422,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             cols_to_drop = ["ALU_NO/Color_No", "RRP/PH EC RRP", "RRP check (I=D)", "SRP/PH MD Price", "SRP check (K=E)", "Comments"]
                             df_to_upload.drop(columns=cols_to_drop, errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
                         else:
-                            pd.DataFrame([{"Message": "No items required updates; all matches clean."}]).to_excel(writer, sheet_name="To Upload", index=False)
+                            pd.DataFrame([{"Message": "All items matched cleanly; zero records generated for uploading."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 output_buffer.seek(0)
                 st.success("🎉 Automation executed successfully!")
