@@ -138,7 +138,7 @@ def _read_shopee_stream_flexible(uploaded_file):
                         if isinstance(df_sheet, dict):
                             for s_name, s_df in df_sheet.items():
                                 if isinstance(s_df, pd.DataFrame) and not s_df.empty:
-                                    dfs.append(s_df) # <-- FIXED LOCAL REFERENCE
+                                    dfs.append(s_df)
                         elif isinstance(df_sheet, pd.DataFrame) and not df_sheet.empty:
                             dfs.append(df_sheet)
         if not dfs:
@@ -179,7 +179,7 @@ with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_sheet = None
-    tracker_pim, tracker_rrp, tracker_md = None, None, None
+    tracker_pim, tracker_rrp, tracker_md = None, None, None, None
     df_tracker = None
     
     if tracker_file:
