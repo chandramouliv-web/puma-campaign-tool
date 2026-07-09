@@ -179,7 +179,7 @@ with col1:
     st.subheader("📋 Core Data Settings")
     tracker_file = st.file_uploader("1. Upload Master Tracker File (.csv, .xlsx)", type=["csv", "xlsx"])
     tracker_sheet = None
-    tracker_pim, tracker_rrp, tracker_md = None, None, None
+    tracker_pim, tracker_rrp, tracker_md = None, None, None, None
     df_tracker = None
     
     if tracker_file:
@@ -231,10 +231,9 @@ with col1:
 with col2:
     st.subheader("🛍 Marketplace Templates")
     
-    # --- SHOPEE SECTION ---
+    # --- SHOPEE SECTION (SIMPLIFIED UI) ---
     shopee_file = None
-    shopee_sku, shopee_parent, shopee_promo, shopee_orig, shopee_start, shopee_end = None, None, None, None, None, None
-    shopee_start_str, shopee_end_str = "", ""
+    shopee_sku, shopee_parent, shopee_orig = None, None, None
     if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
         shopee_file = st.file_uploader("3. Upload Shopee Master Template (.zip, .xlsx, .csv)", type=["zip", "xlsx", "csv"])
         if shopee_file:
@@ -244,22 +243,7 @@ with col2:
                 
                 shopee_sku = st.selectbox("Map Shopee SKU Column (e.g. SKU)", [""] + shopee_headers, key="sh_sku")
                 shopee_parent = st.selectbox("Map Shopee Parent SKU Column", [""] + shopee_headers, key="sh_parent")
-                shopee_promo = st.selectbox("Map Shopee Promotion/Discount Price Column", [""] + shopee_headers, key="sh_promo")
                 shopee_orig = st.selectbox("Map Shopee Original Price Column", [""] + shopee_headers, key="sh_orig")
-                shopee_start = st.selectbox("Map Shopee Start Date Column (Optional)", [""] + shopee_headers, key="sh_start")
-                shopee_end = st.selectbox("Map Shopee End Date Column (Optional)", [""] + shopee_headers, key="sh_end")
-                
-                if shopee_start or shopee_end:
-                    st.caption("🗓️ **Set Shopee Campaign Run Windows**")
-                    dates_col1, dates_col2 = st.columns(2)
-                    with dates_col1:
-                        sh_d1 = st.date_input("Shopee Start Date", datetime(2026, 7, 9))
-                        sh_t1 = st.time_input("Shopee Start Time", time(23, 30, 0))
-                        shopee_start_str = f"{sh_d1} {sh_t1.strftime('%H:%M:%S')}"
-                    with dates_col2:
-                        sh_d2 = st.date_input("Shopee End Date", datetime(2026, 8, 31))
-                        sh_t2 = st.time_input("Shopee End Time", time(23, 59, 59))
-                        shopee_end_str = f"{sh_d2} {sh_t2.strftime('%H:%M:%S')}"
             except Exception as e:
                 st.error(f"Could not open or parse Shopee raw data stream: {e}")
 
@@ -318,7 +302,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Tracker layout mappings are invalid or unassigned."); error_found = True
     if not sku_file or not sku_sku or not sku_pim:
         st.error("❌ Universal reference SKU mapping parameters must be fully bound."); error_found = True
-    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku or not shopee_promo or not shopee_orig):
+    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku or not shopee_orig):
         st.error("❌ Shopee engine selected, but tracking dimensions are unassigned."); error_found = True
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"] and (not lazada_file or not lazada_sku or not lazada_price):
         st.error("❌ Lazada engine selected, but data columns remain unassigned."); error_found = True
@@ -366,6 +350,9 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         df_shopee_raw = _read_shopee_stream_flexible(shopee_file)
                         if not df_shopee_raw.empty:
                             df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
+                            
+                            # Automatically detect internal discount columns from template keys
+                            shopee_promo = _find_col(df_shopee_raw, ["discount price", "promo", "campaign price"]) or "Discount price"
                             
                             shopee_working_flow = []
                             shopee_mismatches = []
@@ -425,8 +412,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 
                                 row['Comments'] = "RRP is true and SRP is not equal to RRP - To be in Upload File"
                                 row[shopee_promo] = tracker_srp_val
-                                if shopee_start: row[shopee_start] = shopee_start_str
-                                if shopee_end: row[shopee_end] = shopee_end_str
                                 
                                 shopee_working_flow.append(row)
                                 shopee_final_uploads.append(row.copy())
@@ -436,7 +421,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
                             df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
-                            # Clean metadata row markers above header row 
                             if shopee_final_uploads:
                                 df_sh_upload = pd.DataFrame(shopee_final_uploads)
                                 drop_cols = ['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments']
@@ -599,7 +583,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 # =========================================================
-                # 🎨 POST-PROCESSING STYLE ENGINE: ENFORCE EX_ORANGE FORMATTING
+                # 🎨 POST-PROCESSING STYLE ENGINE: ENFORCE EX_ORANGE HEADER FORMATTING
                 # =========================================================
                 output_buffer.seek(0)
                 if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
@@ -607,14 +591,12 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     if "To Upload" in wb.sheetnames:
                         ws = wb["To Upload"]
                         
-                        # Define the strict orange theme properties
                         orange_fill = PatternFill(start_color="FF5722", end_color="FF5722", fill_type="solid")
                         white_bold_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
                         thin_side = openpyxl.styles.Side(style='thin', color='CCCCCC')
                         clean_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
                         center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
                         
-                        # Apply styles exclusively to Row 1
                         ws.row_dimensions[1].height = 28
                         for col_idx in range(1, ws.max_column + 1):
                             cell = ws.cell(row=1, column=col_idx)
@@ -623,7 +605,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             cell.border = clean_border
                             cell.alignment = center_align
                         
-                        # Dynamically auto-fit column content widths
                         for col in ws.columns:
                             max_len = max(len(str(cell.value or '')) for cell in col)
                             col_letter = get_column_letter(col[0].column)
