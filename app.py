@@ -251,8 +251,8 @@ with col2:
                 shopee_parent = st.selectbox("Map Parent SKU Column", [""] + shopee_headers, key="sh_parent")
                 shopee_orig = st.selectbox("Map Original Price / RRP Column", [""] + shopee_headers, key="sh_orig")
                 shopee_promo_col = st.selectbox("Map Promotion Price Column", [""] + shopee_headers, key="sh_promo")
-                shopee_stock = st.selectbox("Map Promotion Stock Column", [""] + shopee_headers, key="sh_stock")
-                shopee_limit = st.selectbox("Map Purchase Limit Column", [""] + shopee_headers, key="sh_limit")
+                shopee_stock = st.selectbox("Map Promotion Stock Column (Optional)", ["", "Set Blank"] + shopee_headers, key="sh_stock")
+                shopee_limit = st.selectbox("Map Purchase Limit Column (Optional)", ["", "Set Blank"] + shopee_headers, key="sh_limit")
                 shopee_start_col = st.selectbox("Map Promotion Start Time Column", [""] + shopee_headers, key="sh_start")
                 shopee_end_col = st.selectbox("Map Promotion End Time Column", [""] + shopee_headers, key="sh_end")
             except Exception as e:
@@ -401,7 +401,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 norm_sku = normalize_sku(raw_sku)
                                 target_pim = normalized_sku_to_pim.get(norm_sku, "")
                                 
-                                # Setup target default structures matching sample sheets
                                 alu_no_val = ""
                                 rrp_val = ""
                                 rrp_check_val = "False"
@@ -445,7 +444,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 row_consolidated = row.copy()
                                 shopee_consolidated_output.append(row_consolidated)
                                 
-                                # 2. Build Working File Row with exact target track columns
+                                # 2. Build Working File Row with tracking metadata
                                 row_working = row.copy()
                                 row_working.update({
                                     "ALU_NO": alu_no_val,
@@ -456,19 +455,31 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 })
                                 shopee_working_output.append(row_working)
                                 
-                                # 3. Build To Upload row structure
+                                # 3. Build To Upload file structure (Handling Optional Stock/Limit values)
                                 if belongs_in_upload:
+                                    # Optional Promo Stock Handler
+                                    if shopee_stock == "Set Blank" or not shopee_stock:
+                                        final_stock = ""
+                                    else:
+                                        final_stock = row.get(shopee_stock, "")
+                                        
+                                    # Optional Purchase Limit Handler
+                                    if shopee_limit == "Set Blank" or not shopee_limit:
+                                        final_limit = ""
+                                    else:
+                                        final_limit = row.get(shopee_limit, "")
+
                                     upload_row = {
                                         "Product ID": row.get(shopee_pid, ""),
                                         "Variation ID": row.get(shopee_vid, ""),
                                         "Seller SKU": row.get(shopee_sku_col, ""),
                                         "Promotion Price": row.get(shopee_promo_col, ""),
-                                        "Promotion Stock": row.get(shopee_stock, ""),
-                                        "Purchase Limit": row.get(shopee_limit, "")
+                                        "Promotion Stock": final_stock,
+                                        "Purchase Limit": final_limit
                                     }
                                     shopee_upload_list.append(upload_row)
 
-                            # Save target worksheets matching your exact tab parameters
+                            # Save platform operational worksheets
                             pd.DataFrame(shopee_consolidated_output).to_excel(writer, sheet_name="Consolidated File", index=False)
                             pd.DataFrame(shopee_working_output).to_excel(writer, sheet_name="Working File", index=False)
                             
@@ -476,9 +487,10 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_mismatches_final.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
                             upload_headers = ["Product ID", "Variation ID", "Seller SKU", "Promotion Price", "Promotion Stock", "Purchase Limit"]
-                            df_upload_final = pd.DataFrame(shopee_upload_list) if shopee_upload_list else pd.DataFrame([{"Message": "All entries skipped based on filtering rules."}])
                             if shopee_upload_list:
-                                df_upload_final = df_upload_final[upload_headers]
+                                df_upload_final = pd.DataFrame(shopee_upload_list)[upload_headers]
+                            else:
+                                df_upload_final = pd.DataFrame(columns=upload_headers)
                             df_upload_final.to_excel(writer, sheet_name="To Upload", index=False)
 
                     # -------------------------------------------------------------
@@ -639,7 +651,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Workbook output successfully mapped to your operational sheets format.")
+                st.success("🎉 Process Complete! Optional validation matrices compiled successfully.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
