@@ -13,12 +13,11 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Marketplace Price Automator", page_icon="🚀", layout="wide")
 
 # =================================================================
-# ⚙️ CACHED DATA ENGINES (PREVENTS RE-READING AND RE-PROCESSING)
+# ⚙️ ULTRA HIGH-PERFORMANCE DATA ENGINES & PLUGINS (CACHED)
 # =================================================================
 
 @st.cache_data(show_spinner="Analyzing file structure...")
 def get_cached_sheet_names(file_bytes, file_name):
-    """Dynamically extracts worksheet tabs from binary files."""
     if file_name.endswith(('.xls', '.xlsx')):
         try:
             xl = pd.ExcelFile(io.BytesIO(file_bytes), engine='calamine')
@@ -33,7 +32,6 @@ def get_cached_sheet_names(file_bytes, file_name):
 
 @st.cache_data(show_spinner="Parsing tracking headers...")
 def get_cached_clean_headers_and_df(file_bytes, file_name, target_sheet=None):
-    """Loads and returns layout headers and the raw unmapped DataFrame matrix."""
     try:
         if file_name.endswith('.csv'):
             full_df = pd.read_csv(io.BytesIO(file_bytes), header=None)
@@ -64,7 +62,6 @@ def get_cached_clean_headers_and_df(file_bytes, file_name, target_sheet=None):
             clean_headers.append(f"[{col_letter}] {clean_name}")
 
         full_df.columns = clean_headers
-        # Slice raw records into memory while avoiding extra transformations
         data_df = full_df.iloc[3:].reset_index(drop=True)
         return clean_headers, data_df
     except Exception as e:
@@ -72,7 +69,6 @@ def get_cached_clean_headers_and_df(file_bytes, file_name, target_sheet=None):
 
 @st.cache_data(show_spinner="Ingesting flat files...")
 def read_cached_file_standard(file_bytes, file_name):
-    """Natively caches flat standard tables."""
     if file_name.endswith('.csv'):
         return pd.read_csv(io.BytesIO(file_bytes))
     try:
@@ -82,7 +78,6 @@ def read_cached_file_standard(file_bytes, file_name):
 
 @st.cache_data(show_spinner="Processing master template...")
 def _read_shopee_stream_flexible(file_bytes, file_name):
-    """Cleans multi-format compressed data instantly via memory cache loops."""
     if file_name.endswith('.zip'):
         dfs = []
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
@@ -189,10 +184,10 @@ def is_last_day_of_month(date_val):
         return False
 
 # ==========================================
-# 🎨 STREAMLIT HIGH-RESPONSIVENESS UI
+# 🎨 STREAMLIT INTERACTIVE UI
 # ==========================================
 st.title("🚀 Marketplace Price Automator")
-st.write("Dynamic caching enabled. Process 100k+ rows instantly without losing selector UI performance.")
+st.write("Upload your structural files, map columns dynamically, and generate unified marketplace pricing exports.")
 
 mode = st.selectbox(
     "Select Automation Mode",
@@ -211,7 +206,6 @@ with col1:
     df_tracker = None
     
     if tracker_file:
-        # Cache file streams into memory bytes blocks
         t_bytes = tracker_file.getvalue()
         if tracker_file.name.endswith(('.xlsx', '.xls')):
             t_sheets = get_cached_sheet_names(t_bytes, tracker_file.name)
@@ -236,6 +230,7 @@ with col1:
             
         tracker_headers, df_tracker = get_cached_clean_headers_and_df(t_bytes, tracker_file.name, target_sheet=tracker_sheet)
         if df_tracker is not None:
+            st.success(f"💡 Layout parsed with [{sheet_rounding_strategy}] rounding active for this sheet.")
             tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
             tracker_rrp = st.selectbox("Map Regular RRP Column", [""] + tracker_headers, key="t_rrp")
             tracker_md = st.selectbox("Map Special / Campaign / Markdown Price Column", [""] + tracker_headers, key="t_md")
@@ -248,6 +243,7 @@ with col1:
         s_bytes = sku_file.getvalue()
         try:
             sku_headers = list(read_cached_file_standard(s_bytes, sku_file.name).columns)
+            st.info("💡 Auto-suggesting mappings from your SKU Map columns.")
             
             def_sku_idx = sku_headers.index("EAN") if "EAN" in sku_headers else 0
             def_pim_idx = sku_headers.index("Color_No") if "Color_No" in sku_headers else 0
@@ -326,29 +322,28 @@ with col2:
 st.markdown("---")
 
 # ==========================================
-# ⚙️ PROCESSING EXECUTION CORE (VECTORIZED)
+# ⚙️ PROCESSING EXECUTION CORE
 # ==========================================
 if st.button("🚀 Run Automation Process", type="primary", use_container_width=True):
     error_found = False
     if not tracker_file or not tracker_pim or not tracker_rrp or not tracker_md:
-        st.error("❌ Tracker layout mappings are invalid."); error_found = True
+        st.error("❌ Tracker layout mappings are invalid or unassigned."); error_found = True
     if not sku_file or not sku_sku or not sku_pim:
-        st.error("❌ Reference SKU mapping parameters must be fully bound."); error_found = True
+        st.error("❌ Universal reference SKU mapping parameters must be fully bound."); error_found = True
     if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku or not shopee_orig):
-        st.error("❌ Shopee template columns remain unassigned."); error_found = True
+        st.error("❌ Shopee engine selected, but tracking dimensions are unassigned."); error_found = True
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"] and (not lazada_file or not lazada_sku or not lazada_price):
-        st.error("❌ Lazada columns remain unassigned."); error_found = True
+        st.error("❌ Lazada engine selected, but data columns remain unassigned."); error_found = True
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_file or not zalora_sku or not zalora_promo or not zalora_orig or not zalora_start or not zalora_end):
-        st.error("❌ Zalora tracking dimensions are unassigned."); error_found = True
+        st.error("❌ Zalora engine selected, but columns remain unassigned."); error_found = True
 
     if not error_found:
-        # Pull saved UI byte buffers instantly
         s_bytes = sku_file.getvalue()
         t_bytes = tracker_file.getvalue()
         
-        with st.spinner("Executing optimized system pipeline lookups..."):
+        with st.spinner("Executing system pipeline lookups..."):
             try:
-                # 1. High Performance In-Memory SKU Mapping Ingestion via fast vectors
+                # 1. High Performance In-Memory SKU Mapping Ingestion
                 df_sku = read_cached_file_standard(s_bytes, sku_file.name)
                 sku_raw_arr = df_sku[sku_sku].astype(str).values
                 pim_raw_arr = df_sku[sku_pim].astype(str).values
@@ -364,7 +359,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     if norm_s: ean_to_pim[norm_s] = pim_clean
                     if raw_s: alu_to_pim[raw_s] = pim_clean
 
-                # 2. Parse Tracker Data into high-performance maps
+                # 2. Parse Tracker Data once into memory hash maps
                 tracker_map = {}
                 rrp_map = {}
                 
@@ -387,6 +382,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         df_shopee_raw = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
                         if not df_shopee_raw.empty:
                             df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
+                            
                             shopee_promo = _find_col(df_shopee_raw, ["discount price", "promo", "campaign price"]) or "Discount price"
                             
                             shopee_working_flow = []
@@ -403,7 +399,10 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                     row[shopee_sku] = raw_sku
                                     
                                 if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
-                                    row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Missing SKU and Parent SKU."})
+                                    row.update({
+                                        "ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "",
+                                        "Comments": "Missing SKU and Parent SKU."
+                                    })
                                     shopee_working_flow.append(row)
                                     continue
                                     
@@ -411,22 +410,32 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 pim = ean_to_pim.get(norm_sku) or alu_to_pim.get(raw_sku)
                                 
                                 if not pim or pim not in rrp_map:
-                                    row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Ignore – Item Not Found in Tracker."})
+                                    row.update({
+                                        "ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "",
+                                        "Comments": "Ignore – Item Not Found in Tracker."
+                                    })
                                     shopee_working_flow.append(row)
                                     continue
                                     
                                 tracker_rrp_val = rrp_map[pim]
                                 tracker_srp_val = tracker_map[pim]
                                 current_price = _to_numeric_safe(row.get(shopee_orig, 0), sheet_rounding_strategy)
+                                
                                 rrp_match = (tracker_rrp_val == current_price)
                                 
-                                row.update({"ALU_NO": str(pim), "RRP": str(tracker_rrp_val), "RRP Check": str(rrp_match), "SRP": str(tracker_srp_val)})
+                                row.update({
+                                    "ALU_NO": str(pim), "RRP": str(tracker_rrp_val),
+                                    "RRP Check": str(rrp_match), "SRP": str(tracker_srp_val)
+                                })
                                 
                                 if not rrp_match:
                                     row['Comments'] = "RRP Mismatch"
                                     shopee_working_flow.append(row)
-                                    shopee_mismatches.append({"Seller SKU": raw_sku, "Marketplace Status": "", "Marketplace Message": "", "RRP": tracker_rrp_val})
+                                    shopee_mismatches.append({
+                                        "Seller SKU": raw_sku, "Marketplace Status": "", "Marketplace Message": "", "RRP": tracker_rrp_val
+                                    })
                                     continue
+                                
                                 if tracker_srp_val == 0:
                                     row['Comments'] = "ignore - SRP is Zero"
                                     shopee_working_flow.append(row)
@@ -434,16 +443,19 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 
                                 row['Comments'] = "RRP is true and SRP is not equal to RRP - To be in Upload File"
                                 row[shopee_promo] = tracker_srp_val
+                                
                                 shopee_working_flow.append(row)
                                 shopee_final_uploads.append(row.copy())
                                 
                             pd.DataFrame(shopee_working_flow).to_excel(writer, sheet_name="Working File", index=False)
+                            
                             df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
                             df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
                             if shopee_final_uploads:
                                 df_sh_upload = pd.DataFrame(shopee_final_uploads)
-                                df_sh_upload.drop(columns=['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments'], errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
+                                drop_cols = ['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments']
+                                df_sh_upload.drop(columns=drop_cols, errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
                             else:
                                 pd.DataFrame([{"Message": "All entries skipped based on filtering rules."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
@@ -492,22 +504,32 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pim = alu_to_pim.get(sku) or ean_to_pim.get(norm_sku)
                             
                             if not pim or pim not in rrp_map:
-                                row_dict.update({"ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False", "SRP/PH MD Price": "", "SRP check (K=E)": "False", "Comments": "Ignore – Item Not Found in Tracker."})
+                                row_dict.update({
+                                    "ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False",
+                                    "SRP/PH MD Price": "", "SRP check (K=E)": "False",
+                                    "Comments": "Ignore – Item Not Found in Tracker."
+                                })
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
                             tracker_rrp_val = rrp_map[pim]
                             tracker_srp_val = tracker_map[pim]  
+                            
                             current_rrp = _to_numeric_safe(row_dict[temp_rrp_col], sheet_rounding_strategy)
                             current_srp = _to_numeric_safe(row_dict[temp_srp_col], sheet_rounding_strategy)
                             
                             initial_rrp_match = (tracker_rrp_val == current_rrp)
                             initial_srp_match = (tracker_srp_val == current_srp)
+                            
                             has_no_dates = pd.isna(row_dict[zalora_start]) or str(row_dict[zalora_start]).strip() == ""
                             is_last_day = is_last_day_of_month(row_dict[zalora_end])
                             
                             if initial_rrp_match and initial_srp_match and has_no_dates:
-                                row_dict.update({"ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val), "RRP check (I=D)": "True", "SRP/PH MD Price": str(tracker_srp_val), "SRP check (K=E)": "True", "Comments": "All Good – RRP and SRP Match the Tracker. No Update Required."})
+                                row_dict.update({
+                                    "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                    "RRP check (I=D)": "True", "SRP/PH MD Price": str(tracker_srp_val),
+                                    "SRP check (K=E)": "True", "Comments": "All Good – RRP and SRP Match the Tracker. No Update Required."
+                                })
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
@@ -515,15 +537,24 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 try:
                                     existing_end_dt = pd.to_datetime(row_dict[zalora_end])
                                     if existing_end_dt >= user_selected_end_dt:
-                                        row_dict.update({"ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val), "RRP check (I=D)": "True", "SRP/PH MD Price": str(tracker_srp_val), "SRP check (K=E)": "True", "Comments": "All Good – Sale Ends at Month End. No Update Required."})
+                                        row_dict.update({
+                                            "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                            "RRP check (I=D)": "True", "SRP/PH MD Price": str(tracker_srp_val),
+                                            "SRP check (K=E)": "True", "Comments": "All Good – Sale Ends at Month End. No Update Required."
+                                        })
                                         working_flow_rows.append(row_dict)
                                         continue
                                     else:
                                         row_dict[zalora_end] = str(zalora_end_str)
                                         row_dict["Comments"] = "Sale End Date Updated."
+                                        
                                         post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col], sheet_rounding_strategy))
                                         post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col], sheet_rounding_strategy))
-                                        row_dict.update({"ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val), "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val), "SRP check (K=E)": str(post_srp_match)})
+                                        row_dict.update({
+                                            "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                            "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
+                                            "SRP check (K=E)": str(post_srp_match)
+                                        })
                                         working_flow_rows.append(row_dict)
                                         final_to_upload_rows.append(row_dict.copy())
                                         continue
@@ -534,11 +565,19 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 if tracker_srp_val == 0:
                                     row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "Sale Price Updated."})
                                 else:
-                                    row_dict.update({temp_srp_col: str(tracker_srp_val), zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str), "Comments": "Sale Price Updated."})
+                                    row_dict.update({
+                                        temp_srp_col: str(tracker_srp_val),
+                                        zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
+                                        "Comments": "Sale Price Updated."
+                                    })
                                 
                                 post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col], sheet_rounding_strategy))
                                 post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col], sheet_rounding_strategy))
-                                row_dict.update({"ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val), "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val), "SRP check (K=E)": str(post_srp_match)})
+                                row_dict.update({
+                                    "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                    "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
+                                    "SRP check (K=E)": str(post_srp_match)
+                                })
                                 working_flow_rows.append(row_dict)
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
@@ -548,11 +587,19 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 if tracker_srp_val == 0:
                                     row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "RRP and Sale Price Updated."})
                                 else:
-                                    row_dict.update({temp_srp_col: str(tracker_srp_val), zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str), "Comments": "RRP and Sale Price Updated."})
+                                    row_dict.update({
+                                        temp_srp_col: str(tracker_srp_val),
+                                        zalora_start: str(zalora_start_str), zalora_end: str(zalora_end_str),
+                                        "Comments": "RRP and Sale Price Updated."
+                                    })
                                 
                                 post_rrp_match = (tracker_rrp_val == _to_numeric_safe(row_dict[temp_rrp_col], sheet_rounding_strategy))
                                 post_srp_match = (tracker_srp_val == _to_numeric_safe(row_dict[temp_srp_col], sheet_rounding_strategy))
-                                row_dict.update({"ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val), "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val), "SRP check (K=E)": str(post_srp_match)})
+                                row_dict.update({
+                                    "ALU_NO/Color_No": str(pim), "RRP/PH EC RRP": str(tracker_rrp_val),
+                                    "RRP check (I=D)": str(post_rrp_match), "SRP/PH MD Price": str(tracker_srp_val),
+                                    "SRP check (K=E)": str(post_srp_match)
+                                })
                                 working_flow_rows.append(row_dict)
                                 final_to_upload_rows.append(row_dict.copy())
                                 continue
@@ -563,44 +610,60 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         
                         if final_to_upload_rows:
                             df_to_upload = pd.DataFrame(final_to_upload_rows)
-                            df_to_upload.drop(columns=["ALU_NO/Color_No", "RRP/PH EC RRP", "RRP check (I=D)", "SRP/PH MD Price", "SRP check (K=E)", "Comments"], errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
+                            cols_to_drop = ["ALU_NO/Color_No", "RRP/PH EC RRP", "RRP check (I=D)", "SRP/PH MD Price", "SRP check (K=E)", "Comments"]
+                            df_to_upload.drop(columns=cols_to_drop, errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
                         else:
-                            pd.DataFrame([{"Message": "No updates required."}]).to_excel(writer, sheet_name="To Upload", index=False)
+                            pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 # =========================================================
-                # 🎨 POST-PROCESSING STYLE ENGINE: ENFORCE EX_ORANGE HEADER FORMATTING
+                # 🎨 POST-PROCESSING GLOBAL FORMATTING OVERRIDE MATRIX
                 # =========================================================
                 output_buffer.seek(0)
-                if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
-                    wb = openpyxl.load_workbook(output_buffer)
-                    if "To Upload" in wb.sheetnames:
-                        ws = wb["To Upload"]
+                wb = openpyxl.load_workbook(output_buffer)
+                
+                # Setup universal formatting properties
+                consolas_font_data = Font(name="Consolas", size=10, bold=False, color="000000")
+                consolas_font_header = Font(name="Consolas", size=10, bold=True, color="FFFFFF")
+                center_vertical_align = Alignment(vertical="center")
+                
+                # Apply style updates cleanly to EVERY worksheet generated
+                for s_name in wb.sheetnames:
+                    ws = wb[s_name]
+                    
+                    # 1. Enforce row heights universally to 15
+                    for r_idx in range(1, ws.max_row + 1):
+                        ws.row_dimensions[r_idx].height = 15
                         
-                        orange_fill = PatternFill(start_color="FF5722", end_color="FF5722", fill_type="solid")
-                        white_bold_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-                        thin_side = openpyxl.styles.Side(style='thin', color='CCCCCC')
-                        clean_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
-                        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                        
-                        ws.row_dimensions[1].height = 28
-                        for col_idx in range(1, ws.max_column + 1):
-                            cell = ws.cell(row=1, column=col_idx)
-                            cell.fill = orange_fill
-                            cell.font = white_bold_font
-                            cell.border = clean_border
-                            cell.alignment = center_align
-                        
-                        for col in ws.columns:
-                            max_len = max(len(str(cell.value or '')) for cell in col)
-                            col_letter = get_column_letter(col[0].column)
-                            ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+                    # 2. Iterate cells to assign fonts and alignments
+                    for r_idx in range(1, ws.max_row + 1):
+                        is_header_row = (r_idx == 1)
+                        for c_idx in range(1, ws.max_column + 1):
+                            cell = ws.cell(row=r_idx, column=c_idx)
+                            cell.alignment = center_vertical_align
                             
-                    new_buffer = io.BytesIO()
-                    wb.save(new_buffer)
-                    output_buffer = new_buffer
+                            if is_header_row:
+                                # Overwrite font to Consolas size 10 while keeping the original styles intact
+                                cell.font = Font(name="Consolas", size=10, bold=cell.font.bold, color=cell.font.color, italic=cell.font.italic)
+                            else:
+                                cell.font = consolas_font_data
+                                
+                    # 3. Handle column auto-fitting layout logic
+                    for col in ws.columns:
+                        max_len = 15 # Baseline minimum width parameter
+                        for cell in col:
+                            val_str = str(cell.value or '')
+                            if len(val_str) > max_len:
+                                max_len = len(val_str)
+                        col_letter = get_column_letter(col[0].column)
+                        # Expand columns seamlessly while adding buffer safety margins
+                        ws.column_dimensions[col_letter].width = min(max_len + 3, 50)
+                
+                new_buffer = io.BytesIO()
+                wb.save(new_buffer)
+                output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Clean orange header formatted successfully on Row 1.")
+                st.success("🎉 Process Complete! Consolas sizing and custom cell auto-fitting rules applied to all sheets.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
