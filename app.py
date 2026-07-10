@@ -636,4 +636,3 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 )
             except Exception as e:
                 st.error(f"A systematic error occurred during calculations: {e}")
-}
