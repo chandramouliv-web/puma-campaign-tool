@@ -79,7 +79,6 @@ def read_cached_file_standard(file_bytes, file_name):
     except:
         return pd.read_excel(io.BytesIO(file_bytes))
 
-@st.cache_data(show_spinner="Processing master Shopee archive...")
 def _read_shopee_stream_flexible(file_bytes, file_name):
     """
     PHASE 1: EXTRACTION & INITIAL CONSOLIDATION
@@ -242,6 +241,7 @@ with col2:
         if shopee_file:
             sh_bytes = shopee_file.getvalue()
             try:
+                # Dynamically retrieve and populate dropdown parameters directly based on the uploaded file contents
                 df_shopee_preview = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
                 shopee_headers = list(df_shopee_preview.columns)
                 
@@ -451,7 +451,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 else:
                                     final_limit = row.get(shopee_limit, "")
 
-                                # 1. Build Consolidated Sheet Row (Aligned exactly to template requirements)
+                                # 1. Build Consolidated Sheet Row (Aligned exactly to target upload sheet layout template)
                                 row_consolidated = {
                                     "Product ID": row.get(shopee_pid, ""),
                                     "Product Name(Optional)": row.get(shopee_pname, ""),
