@@ -616,46 +616,41 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No items required updates; all records skipped from upload file."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 # =========================================================
-                # 🎨 POST-PROCESSING GLOBAL FORMATTING OVERRIDE MATRIX
+                # 🎨 POST-PROCESSING GLOBAL FORMATTING OVERRIDE MATRIX (BATCH LOOP)
                 # =========================================================
                 output_buffer.seek(0)
                 wb = openpyxl.load_workbook(output_buffer)
                 
-                # Setup universal formatting properties
-                consolas_font_data = Font(name="Consolas", size=10, bold=False, color="000000")
-                consolas_font_header = Font(name="Consolas", size=10, bold=True, color="FFFFFF")
+                # Setup universal formatting objects
+                consolas_font_data = Font(name="Consolas", size=10, bold=False)
                 center_vertical_align = Alignment(vertical="center")
                 
-                # Apply style updates cleanly to EVERY worksheet generated
                 for s_name in wb.sheetnames:
                     ws = wb[s_name]
                     
-                    # 1. Enforce row heights universally to 15
+                    # 1. Faster Row Height Allocation via sequential indexing loop
                     for r_idx in range(1, ws.max_row + 1):
                         ws.row_dimensions[r_idx].height = 15
                         
-                    # 2. Iterate cells to assign fonts and alignments
-                    for r_idx in range(1, ws.max_row + 1):
-                        is_header_row = (r_idx == 1)
-                        for c_idx in range(1, ws.max_column + 1):
-                            cell = ws.cell(row=r_idx, column=c_idx)
+                    # 2. Optimized Row-Level Font and Alignment Broadcast using iter_rows
+                    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+                        is_header_row = (row[0].row == 1)
+                        for cell in row:
                             cell.alignment = center_vertical_align
-                            
                             if is_header_row:
-                                # Overwrite font to Consolas size 10 while keeping the original styles intact
+                                # Overwrite font family/size while keeping original background/text color intact
                                 cell.font = Font(name="Consolas", size=10, bold=cell.font.bold, color=cell.font.color, italic=cell.font.italic)
                             else:
                                 cell.font = consolas_font_data
                                 
-                    # 3. Handle column auto-fitting layout logic
+                    # 3. Dynamic Column Width Fitter
                     for col in ws.columns:
-                        max_len = 15 # Baseline minimum width parameter
+                        max_len = 15  # Baseline width minimum requirement
                         for cell in col:
                             val_str = str(cell.value or '')
                             if len(val_str) > max_len:
                                 max_len = len(val_str)
                         col_letter = get_column_letter(col[0].column)
-                        # Expand columns seamlessly while adding buffer safety margins
                         ws.column_dimensions[col_letter].width = min(max_len + 3, 50)
                 
                 new_buffer = io.BytesIO()
@@ -663,7 +658,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Consolas sizing and custom cell auto-fitting rules applied to all sheets.")
+                st.success("🎉 Process Complete! Consolas font rules applied globally to all generated worksheets.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
