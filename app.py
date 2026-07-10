@@ -241,7 +241,6 @@ with col2:
         if shopee_file:
             sh_bytes = shopee_file.getvalue()
             try:
-                # Dynamically retrieve and populate dropdown parameters directly based on the uploaded file contents
                 df_shopee_preview = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
                 shopee_headers = list(df_shopee_preview.columns)
                 
@@ -451,7 +450,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 else:
                                     final_limit = row.get(shopee_limit, "")
 
-                                # 1. Build Consolidated Sheet Row (Aligned exactly to target upload sheet layout template)
+                                # 1. Build Consolidated Sheet Row (Aligned exactly to template layout)
                                 row_consolidated = {
                                     "Product ID": row.get(shopee_pid, ""),
                                     "Product Name(Optional)": row.get(shopee_pname, ""),
@@ -661,7 +660,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Optional validation matrices compiled successfully.")
+                st.success("🎉 Process Complete! Clean orange header formatted successfully on Row 1.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
@@ -670,4 +669,4 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"A systematic error occurred during processing loops: {e}")
+                st.error(f"A systematic error occurred during calculations: {e}")
