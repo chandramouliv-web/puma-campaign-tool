@@ -342,9 +342,9 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         s_bytes = sku_file.getvalue()
         t_bytes = tracker_file.getvalue()
         
-        with st.spinner("Executing high-speed vectorized lookups..."):
+        with st.spinner("Executing system pipeline lookups..."):
             try:
-                # 1. High Performance In-Memory SKU Mapping Ingestion via NumPy vectors
+                # 1. High Performance In-Memory SKU Mapping Ingestion
                 df_sku = read_cached_file_standard(s_bytes, sku_file.name)
                 sku_raw_arr = df_sku[sku_sku].astype(str).values
                 pim_raw_arr = df_sku[sku_pim].astype(str).values
@@ -383,26 +383,28 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         df_shopee_raw = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
                         
                         if not df_shopee_raw.empty:
-                            # Trim whitespaces, string cast, and normalize null elements instantly
+                            # Trim whitespaces and remove clean strings in columns
                             for col in [shopee_sku, shopee_parent]:
                                 if col in df_shopee_raw.columns:
-                                    df_shopee_raw[col] = df_shopee_raw[col].astype(str).str.strip().replace(['nan', 'None', ''], pd.NA)
+                                    df_shopee_raw[col] = df_shopee_raw[col].astype(str).str.strip().replace(['nan', 'None', '', '<na>'], pd.NA)
                             
-                            # Fallback Seller SKU logic via high-speed Series assignment
+                            # Fallback Seller SKU Logic via vectorized fillna
                             df_shopee_raw[shopee_sku] = df_shopee_raw[shopee_sku].fillna(df_shopee_raw[shopee_parent])
                             df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
                             
                             shopee_promo = _find_col(df_shopee_raw, ["discount price", "promo", "campaign price"]) or "Discount price"
                             
-                            # Vectorized processing instead of object loops
+                            # Allocate structural arrays for memory assembly
                             working_flow_records = []
                             mismatch_records = []
                             upload_records = []
                             
-                            for row in df_shopee_raw.to_dict('records'):
+                            shopee_records = df_shopee_raw.to_dict('records')
+                            for row in shopee_records:
                                 raw_sku = str(row.get(shopee_sku, '')).strip()
                                 raw_parent = str(row.get(shopee_parent, '')).strip()
                                 
+                                # Validate SKU structures and tag comments vector matches
                                 if not raw_sku or raw_sku.lower() in ['nan', '<na>', '']:
                                     row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Missing Seller SKU and Parent SKU."})
                                     working_flow_records.append(row)
@@ -432,7 +434,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                     row['Comments'] = "ignore - SRP is Zero"
                                     working_flow_records.append(row)
                                     continue
-                                    
+                                
                                 row['Comments'] = "RRP is true and SRP is not equal to RRP - To be in Upload File"
                                 row[shopee_promo] = tracker_srp_val
                                 working_flow_records.append(row)
@@ -614,17 +616,17 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 for s_name in wb.sheetnames:
                     ws = wb[s_name]
                     
-                    # 1. Faster Row Height Allocation via formatting list index
+                    # 1. Row Height Allocation
                     for r_idx in range(1, ws.max_row + 1):
                         ws.row_dimensions[r_idx].height = 15
                         
-                    # 2. Optimized Row-Level Font and Alignment Broadcast using iter_rows
+                    # 2. Optimized Row-Level Font and Alignment Broadcast
                     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
                         is_header_row = (row[0].row == 1)
                         for cell in row:
                             cell.alignment = center_vertical_align
                             if is_header_row:
-                                # Overwrite family while retaining background colors and specific formatting properties
+                                # Retain original cell properties while applying style parameters
                                 cell.font = Font(name="Consolas", size=10, bold=cell.font.bold, color=cell.font.color, italic=cell.font.italic)
                             else:
                                 cell.font = consolas_font_data
@@ -644,7 +646,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Vectorized performance optimization rules applied cleanly.")
+                st.success("🎉 Process Complete! System calculations and structural layouts finalized seamlessly.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
