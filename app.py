@@ -83,8 +83,7 @@ def read_cached_file_standard(file_bytes, file_name):
 def _read_shopee_stream_flexible(file_bytes, file_name):
     """
     PHASE 1: EXTRACTION & INITIAL CONSOLIDATION
-    Extracts all spreadsheet files inside an uploaded ZIP cluster or a single standalone file.
-    Runs case-insensitive header-matching schemas inside memory arrays.
+    Extracts spreadsheet files inside an uploaded ZIP cluster or a standalone sheet.
     """
     dfs = []
     if file_name.endswith('.zip'):
@@ -354,7 +353,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     raw_rrp = rrp_tracker_raw[t_idx]
                     raw_md = md_tracker_raw[t_idx]
                     
-                    # Core Logic Calculation Requirement
                     if raw_md == 0 or pd.isna(raw_md):
                         new_price = round(raw_rrp)
                     else:
@@ -363,7 +361,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     tracker_map_new_price[pim_val] = new_price
                     tracker_map_rrp[pim_val] = round(raw_rrp)
 
-                # Map Normalized SKU -> Target Values
                 for idx_s in range(len(sku_raw_arr)):
                     raw_s = sku_raw_arr[idx_s].strip()
                     norm_s = normalize_sku(raw_s)
@@ -378,7 +375,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
                     # -------------------------------------------------------------
-                    # PHASE 1 & 3: SHOPEE ENGINE REFACTOR
+                    # PHASE 1 & 3: SHOPEE ENGINE REFACTOR WITH TARGET COLS
                     # -------------------------------------------------------------
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         sh_bytes = shopee_file.getvalue()
@@ -388,60 +385,79 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             shopee_records = df_shopee_raw.to_dict('records')
                             
                             shopee_consolidated_output = []
+                            shopee_working_output = []
                             shopee_rrp_mismatches = []
                             shopee_upload_list = []
                             
                             for row in shopee_records:
-                                # Fallback Rule: If Seller SKU field is missing, clone from Parent SKU
+                                # Fallback Rule: Replace blank Seller SKU with Parent SKU
                                 raw_sku = str(row.get(shopee_sku_col, '')).strip()
                                 raw_parent = str(row.get(shopee_parent, '')).strip()
                                 
-                                if not raw_sku or raw_sku.lower() == 'nan':
+                                if not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '':
                                     raw_sku = raw_parent
                                     row[shopee_sku_col] = raw_sku
                                 
                                 norm_sku = normalize_sku(raw_sku)
                                 target_pim = normalized_sku_to_pim.get(norm_sku, "")
                                 
-                                qc_comment = "Ignore – Item Not Found in Tracker."
+                                # Setup target default structures matching sample sheets
+                                alu_no_val = ""
+                                rrp_val = ""
+                                rrp_check_val = "False"
+                                srp_val = ""
+                                comments_val = "Ignore – Item Not Found in Tracker."
+                                
                                 belongs_in_upload = False
+                                current_orig_price = _to_numeric_safe(row.get(shopee_orig, 0))
                                 
-                                start_dt = row.get(shopee_start_col, "") if shopee_start_col else ""
-                                end_dt = row.get(shopee_end_col, "") if shopee_end_col else ""
-                                current_shopee_promo = row.get(shopee_promo_col, 0)
-                                
-                                if target_pim in tracker_map_rrp:
+                                if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
+                                    comments_val = "Missing SKU and Parent SKU."
+                                elif target_pim in tracker_map_rrp:
+                                    alu_no_val = target_pim
                                     tracker_rrp_val = tracker_map_rrp[target_pim]
                                     tracker_new_price = tracker_map_new_price[target_pim]
-                                    current_orig_price = _to_numeric_safe(row.get(shopee_orig, 0))
                                     
-                                    # Phase 3 QC Routing Constraints
-                                    if current_orig_price != tracker_rrp_val:
-                                        qc_comment = "RRP Mismatch"
+                                    rrp_val = str(tracker_rrp_val)
+                                    srp_val = str(tracker_new_price)
+                                    
+                                    rrp_match = (tracker_rrp_val == current_orig_price)
+                                    rrp_check_val = str(rrp_match)
+                                    
+                                    if not rrp_match:
+                                        comments_val = "RRP Mismatch"
                                         shopee_rrp_mismatches.append({
                                             "Seller SKU": raw_sku,
-                                            "Marketplace Status": "Active",
-                                            "Marketplace Message": "RRP Mismatch",
-                                            "RRP": tracker_rrp_val,
-                                            "Sale Amount": current_shopee_promo,
-                                            "Sale Start Date": start_dt,
-                                            "Sale End Date": end_dt
+                                            "Marketplace Status": "",
+                                            "Marketplace Message": "",
+                                            "RRP": tracker_rrp_val
                                         })
-                                    elif not tracker_new_price or pd.isna(tracker_new_price) or tracker_new_price == 0:
-                                        qc_comment = "Discount Price is Blank"
+                                    elif tracker_new_price == 0:
+                                        comments_val = "ignore - SRP is Zero"
                                     elif tracker_rrp_val == tracker_new_price:
-                                        qc_comment = "Remove: RRP = Discount"
+                                        comments_val = "Remove: RRP = Discount"
                                     else:
-                                        qc_comment = "Ready for Upload"
+                                        comments_val = "RRP is true and SRP is not equal to RRP - To be in Upload File"
                                         row[shopee_promo_col] = tracker_new_price
                                         belongs_in_upload = True
-                                
+
+                                # 1. Build Consolidated Sheet Row
                                 row_consolidated = row.copy()
-                                row_consolidated["QC Comment"] = qc_comment
                                 shopee_consolidated_output.append(row_consolidated)
                                 
+                                # 2. Build Working File Row with exact target track columns
+                                row_working = row.copy()
+                                row_working.update({
+                                    "ALU_NO": alu_no_val,
+                                    "RRP": rrp_val,
+                                    "RRP Check": rrp_check_val,
+                                    "SRP": srp_val,
+                                    "Comments": comments_val
+                                })
+                                shopee_working_output.append(row_working)
+                                
+                                # 3. Build To Upload row structure
                                 if belongs_in_upload:
-                                    # Build specific template format for clean upload mapping
                                     upload_row = {
                                         "Product ID": row.get(shopee_pid, ""),
                                         "Variation ID": row.get(shopee_vid, ""),
@@ -452,15 +468,18 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                     }
                                     shopee_upload_list.append(upload_row)
 
-                            # Save Phase 4 Output sheets
+                            # Save target worksheets matching your exact tab parameters
                             pd.DataFrame(shopee_consolidated_output).to_excel(writer, sheet_name="Consolidated File", index=False)
+                            pd.DataFrame(shopee_working_output).to_excel(writer, sheet_name="Working File", index=False)
                             
-                            df_mismatches_final = pd.DataFrame(shopee_rrp_mismatches) if shopee_rrp_mismatches else pd.DataFrame(columns=["Seller SKU", "Marketplace Status", "Marketplace Message", "RRP", "Sale Amount", "Sale Start Date", "Sale End Date"])
-                            df_mismatches_final.to_excel(writer, sheet_name="Shopee_RRP_Mismatches", index=False)
+                            df_mismatches_final = pd.DataFrame(shopee_rrp_mismatches) if shopee_rrp_mismatches else pd.DataFrame(columns=["Seller SKU", "Marketplace Status", "Marketplace Message", "RRP"])
+                            df_mismatches_final.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
                             upload_headers = ["Product ID", "Variation ID", "Seller SKU", "Promotion Price", "Promotion Stock", "Purchase Limit"]
-                            df_upload_final = pd.DataFrame(shopee_upload_list) if shopee_upload_list else pd.DataFrame(columns=upload_headers)
-                            df_upload_final.to_excel(writer, sheet_name="Shopee_Upload", index=False)
+                            df_upload_final = pd.DataFrame(shopee_upload_list) if shopee_upload_list else pd.DataFrame([{"Message": "All entries skipped based on filtering rules."}])
+                            if shopee_upload_list:
+                                df_upload_final = df_upload_final[upload_headers]
+                            df_upload_final.to_excel(writer, sheet_name="To Upload", index=False)
 
                     # -------------------------------------------------------------
                     # 4. Process Lazada Channel Data
@@ -592,7 +611,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer.seek(0)
                 wb = openpyxl.load_workbook(output_buffer)
                 
-                target_styled_sheets = ["Shopee_Upload", "To Upload", "Lazada_Upload", "Shopee_RRP_Mismatches"]
+                target_styled_sheets = ["To Upload", "Lazada_Upload", "RRP Mismatches", "Working File"]
                 for sheet_name in wb.sheetnames:
                     if sheet_name in target_styled_sheets or "Upload" in sheet_name:
                         ws = wb[sheet_name]
@@ -620,7 +639,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Platform-ready files compiled successfully.")
+                st.success("🎉 Process Complete! Workbook output successfully mapped to your operational sheets format.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
