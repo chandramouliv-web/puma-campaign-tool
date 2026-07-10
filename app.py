@@ -413,6 +413,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
                                     comments_val = "Missing SKU and Parent SKU."
                                 elif target_pim in tracker_map_rrp:
+                                    # Directly map the clean PIM ID/Color_No extracted from Master Tracker
                                     alu_no_val = target_pim
                                     tracker_rrp_val = tracker_map_rrp[target_pim]
                                     tracker_new_price = tracker_map_new_price[target_pim]
@@ -444,10 +445,10 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 row_consolidated = row.copy()
                                 shopee_consolidated_output.append(row_consolidated)
                                 
-                                # 2. Build Working File Row with tracking metadata
+                                # 2. Build Working File Row with exact target track columns
                                 row_working = row.copy()
                                 row_working.update({
-                                    "ALU_NO": alu_no_val,
+                                    "PIM ID / Color_No": alu_no_val,
                                     "RRP": rrp_val,
                                     "RRP Check": rrp_check_val,
                                     "SRP": srp_val,
@@ -457,13 +458,11 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 
                                 # 3. Build To Upload file structure (Handling Optional Stock/Limit values)
                                 if belongs_in_upload:
-                                    # Optional Promo Stock Handler
                                     if shopee_stock == "Set Blank" or not shopee_stock:
                                         final_stock = ""
                                     else:
                                         final_stock = row.get(shopee_stock, "")
                                         
-                                    # Optional Purchase Limit Handler
                                     if shopee_limit == "Set Blank" or not shopee_limit:
                                         final_limit = ""
                                     else:
