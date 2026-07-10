@@ -257,7 +257,7 @@ with col1:
 with col2:
     st.subheader("🛍 Marketplace Templates")
     
-    # --- SHOPEE SECTION (SIMPLIFIED UI) ---
+    # --- SHOPEE SECTION ---
     shopee_file = None
     shopee_sku, shopee_parent, shopee_orig = None, None, None
     if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
@@ -291,7 +291,7 @@ with col2:
 
     # --- ZALORA SECTION ---
     zalora_file = None
-    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None, None
+    zalora_sku, zalora_promo, zalora_orig, zalora_start, zalora_end = None, None, None, None, None # <-- FIXED: REMOVED EXTRA NONE MATRIX VALUE
     zalora_start_str, zalora_end_str = "", ""
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
@@ -377,24 +377,21 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data (Vectorized Transformation Engine)
+                    # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         sh_bytes = shopee_file.getvalue()
                         df_shopee_raw = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
                         
                         if not df_shopee_raw.empty:
-                            # Trim whitespaces and remove clean strings in columns
                             for col in [shopee_sku, shopee_parent]:
                                 if col in df_shopee_raw.columns:
                                     df_shopee_raw[col] = df_shopee_raw[col].astype(str).str.strip().replace(['nan', 'None', '', '<na>'], pd.NA)
                             
-                            # Fallback Seller SKU Logic via vectorized fillna
                             df_shopee_raw[shopee_sku] = df_shopee_raw[shopee_sku].fillna(df_shopee_raw[shopee_parent])
                             df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
                             
                             shopee_promo = _find_col(df_shopee_raw, ["discount price", "promo", "campaign price"]) or "Discount price"
                             
-                            # Allocate structural arrays for memory assembly
                             working_flow_records = []
                             mismatch_records = []
                             upload_records = []
@@ -404,7 +401,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 raw_sku = str(row.get(shopee_sku, '')).strip()
                                 raw_parent = str(row.get(shopee_parent, '')).strip()
                                 
-                                # Validate SKU structures and tag comments vector matches
                                 if not raw_sku or raw_sku.lower() in ['nan', '<na>', '']:
                                     row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Missing Seller SKU and Parent SKU."})
                                     working_flow_records.append(row)
@@ -573,7 +569,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 continue
                                 
                             if not initial_rrp_match:
-                                row_dict[temp_rrp_col] = str(tracker_rrp_val)
+                                row_dict[temp_rrp_col] = str(row_dict[temp_rrp_col]) if pd.isna(tracker_rrp_val) else str(tracker_rrp_val)
                                 if tracker_srp_val == 0:
                                     row_dict.update({temp_srp_col: "", zalora_start: "", zalora_end: "", "Comments": "RRP and Sale Price Updated."})
                                 else:
@@ -626,7 +622,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         for cell in row:
                             cell.alignment = center_vertical_align
                             if is_header_row:
-                                # Retain original cell properties while applying style parameters
+                                # Overwrite family while retaining background colors and specific formatting properties
                                 cell.font = Font(name="Consolas", size=10, bold=cell.font.bold, color=cell.font.color, italic=cell.font.italic)
                             else:
                                 cell.font = consolas_font_data
