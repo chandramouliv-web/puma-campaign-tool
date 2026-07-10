@@ -236,8 +236,8 @@ with col2:
     
     # --- SHOPEE SECTION ---
     shopee_file = None
-    shopee_sku, shopee_parent, shopee_orig, shopee_promo = None, None, None, None
-    shopee_start_col, shopee_end_col = None, None
+    shopee_pid, shopee_vid, shopee_sku_col, shopee_parent, shopee_orig, shopee_promo_col = None, None, None, None, None, None
+    shopee_stock, shopee_limit, shopee_start_col, shopee_end_col = None, None, None, None
     if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
         shopee_file = st.file_uploader("3. Upload Shopee Master Template (.zip, .xlsx, .csv)", type=["zip", "xlsx", "csv"])
         if shopee_file:
@@ -246,12 +246,16 @@ with col2:
                 df_shopee_preview = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
                 shopee_headers = list(df_shopee_preview.columns)
                 
-                shopee_sku = st.selectbox("Map Shopee Seller SKU Column", [""] + shopee_headers, key="sh_sku")
-                shopee_parent = st.selectbox("Map Shopee Parent SKU Column", [""] + shopee_headers, key="sh_parent")
-                shopee_orig = st.selectbox("Map Shopee Original Price / RRP Column", [""] + shopee_headers, key="sh_orig")
-                shopee_promo = st.selectbox("Map Shopee Promotion Price Column", [""] + shopee_headers, key="sh_promo")
-                shopee_start_col = st.selectbox("Map Shopee Start Date Column", [""] + shopee_headers, key="sh_start")
-                shopee_end_col = st.selectbox("Map Shopee End Date Column", [""] + shopee_headers, key="sh_end")
+                shopee_pid = st.selectbox("Map Product ID Column", [""] + shopee_headers, key="sh_pid")
+                shopee_vid = st.selectbox("Map Variation ID Column", [""] + shopee_headers, key="sh_vid")
+                shopee_sku_col = st.selectbox("Map Seller SKU Column", [""] + shopee_headers, key="sh_sku")
+                shopee_parent = st.selectbox("Map Parent SKU Column", [""] + shopee_headers, key="sh_parent")
+                shopee_orig = st.selectbox("Map Original Price / RRP Column", [""] + shopee_headers, key="sh_orig")
+                shopee_promo_col = st.selectbox("Map Promotion Price Column", [""] + shopee_headers, key="sh_promo")
+                shopee_stock = st.selectbox("Map Promotion Stock Column", [""] + shopee_headers, key="sh_stock")
+                shopee_limit = st.selectbox("Map Purchase Limit Column", [""] + shopee_headers, key="sh_limit")
+                shopee_start_col = st.selectbox("Map Promotion Start Time Column", [""] + shopee_headers, key="sh_start")
+                shopee_end_col = st.selectbox("Map Promotion End Time Column", [""] + shopee_headers, key="sh_end")
             except Exception as e:
                 st.error(f"Could not open or parse Shopee raw data stream: {e}")
 
@@ -312,8 +316,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
         st.error("❌ Tracker layout mappings are invalid."); error_found = True
     if not sku_file or not sku_sku or not sku_pim:
         st.error("❌ Reference SKU mapping parameters must be fully bound."); error_found = True
-    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku or not shopee_orig or not shopee_promo):
-        st.error("❌ Shopee template columns (SKU, Original Price, and Promotion Price) remain unassigned."); error_found = True
+    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku_col or not shopee_orig or not shopee_promo_col):
+        st.error("❌ Shopee template columns (Seller SKU, Original Price, and Promotion Price) remain unassigned."); error_found = True
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"] and (not lazada_file or not lazada_sku or not lazada_price):
         st.error("❌ Lazada columns remain unassigned."); error_found = True
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_file or not zalora_sku or not zalora_promo or not zalora_orig or not zalora_start or not zalora_end):
@@ -350,7 +354,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     raw_rrp = rrp_tracker_raw[t_idx]
                     raw_md = md_tracker_raw[t_idx]
                     
-                    # Logic Condition: Rule for calculating New Price
+                    # Core Logic Calculation Requirement
                     if raw_md == 0 or pd.isna(raw_md):
                         new_price = round(raw_rrp)
                     else:
@@ -359,7 +363,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     tracker_map_new_price[pim_val] = new_price
                     tracker_map_rrp[pim_val] = round(raw_rrp)
 
-                # Map Normalized SKU -> Targets
+                # Map Normalized SKU -> Target Values
                 for idx_s in range(len(sku_raw_arr)):
                     raw_s = sku_raw_arr[idx_s].strip()
                     norm_s = normalize_sku(raw_s)
@@ -388,13 +392,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             shopee_upload_list = []
                             
                             for row in shopee_records:
-                                # Fallback logic requirement: If empty Seller SKU, copy Parent SKU
-                                raw_sku = str(row.get(shopee_sku, '')).strip()
+                                # Fallback Rule: If Seller SKU field is missing, clone from Parent SKU
+                                raw_sku = str(row.get(shopee_sku_col, '')).strip()
                                 raw_parent = str(row.get(shopee_parent, '')).strip()
                                 
                                 if not raw_sku or raw_sku.lower() == 'nan':
                                     raw_sku = raw_parent
-                                    row[shopee_sku] = raw_sku
+                                    row[shopee_sku_col] = raw_sku
                                 
                                 norm_sku = normalize_sku(raw_sku)
                                 target_pim = normalized_sku_to_pim.get(norm_sku, "")
@@ -404,15 +408,14 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 
                                 start_dt = row.get(shopee_start_col, "") if shopee_start_col else ""
                                 end_dt = row.get(shopee_end_col, "") if shopee_end_col else ""
-                                current_shopee_promo = row.get(shopee_promo, 0)
+                                current_shopee_promo = row.get(shopee_promo_col, 0)
                                 
                                 if target_pim in tracker_map_rrp:
                                     tracker_rrp_val = tracker_map_rrp[target_pim]
                                     tracker_new_price = tracker_map_new_price[target_pim]
                                     current_orig_price = _to_numeric_safe(row.get(shopee_orig, 0))
                                     
-                                    # Order of Operations Checks from Phase 3:
-                                    # Check 1: RRP Deviation Checks
+                                    # Phase 3 QC Routing Constraints
                                     if current_orig_price != tracker_rrp_val:
                                         qc_comment = "RRP Mismatch"
                                         shopee_rrp_mismatches.append({
@@ -424,33 +427,39 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                             "Sale Start Date": start_dt,
                                             "Sale End Date": end_dt
                                         })
-                                    # Check 2: Missing/Blank Target Pricing
                                     elif not tracker_new_price or pd.isna(tracker_new_price) or tracker_new_price == 0:
                                         qc_comment = "Discount Price is Blank"
-                                    # Check 3: Promo Equalizer Constraint
                                     elif tracker_rrp_val == tracker_new_price:
                                         qc_comment = "Remove: RRP = Discount"
                                     else:
-                                        # Clean Upload Pipeline
                                         qc_comment = "Ready for Upload"
-                                        row[shopee_promo] = tracker_new_price
+                                        row[shopee_promo_col] = tracker_new_price
                                         belongs_in_upload = True
                                 
-                                # Append directly to Phase 4 outputs
                                 row_consolidated = row.copy()
                                 row_consolidated["QC Comment"] = qc_comment
                                 shopee_consolidated_output.append(row_consolidated)
                                 
                                 if belongs_in_upload:
-                                    shopee_upload_list.append(row.copy())
+                                    # Build specific template format for clean upload mapping
+                                    upload_row = {
+                                        "Product ID": row.get(shopee_pid, ""),
+                                        "Variation ID": row.get(shopee_vid, ""),
+                                        "Seller SKU": row.get(shopee_sku_col, ""),
+                                        "Promotion Price": row.get(shopee_promo_col, ""),
+                                        "Promotion Stock": row.get(shopee_stock, ""),
+                                        "Purchase Limit": row.get(shopee_limit, "")
+                                    }
+                                    shopee_upload_list.append(upload_row)
 
-                            # Write Phase 4 worksheets
+                            # Save Phase 4 Output sheets
                             pd.DataFrame(shopee_consolidated_output).to_excel(writer, sheet_name="Consolidated File", index=False)
                             
                             df_mismatches_final = pd.DataFrame(shopee_rrp_mismatches) if shopee_rrp_mismatches else pd.DataFrame(columns=["Seller SKU", "Marketplace Status", "Marketplace Message", "RRP", "Sale Amount", "Sale Start Date", "Sale End Date"])
                             df_mismatches_final.to_excel(writer, sheet_name="Shopee_RRP_Mismatches", index=False)
                             
-                            df_upload_final = pd.DataFrame(shopee_upload_list) if shopee_upload_list else pd.DataFrame(columns=df_shopee_raw.columns)
+                            upload_headers = ["Product ID", "Variation ID", "Seller SKU", "Promotion Price", "Promotion Stock", "Purchase Limit"]
+                            df_upload_final = pd.DataFrame(shopee_upload_list) if shopee_upload_list else pd.DataFrame(columns=upload_headers)
                             df_upload_final.to_excel(writer, sheet_name="Shopee_Upload", index=False)
 
                     # -------------------------------------------------------------
