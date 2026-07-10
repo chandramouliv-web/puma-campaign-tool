@@ -100,7 +100,7 @@ def _read_shopee_stream_flexible(file_bytes, file_name):
                             df = pd.read_excel(io.BytesIO(f.read()), header=None, engine='calamine')
                         except:
                             df = pd.read_excel(io.BytesIO(f.read()), header=None)
-                    
+                        
                     df_cleaned = auto_detect_shopee_header(df)
                     if isinstance(df_cleaned, pd.DataFrame) and not df_cleaned.empty:
                         dfs.append(df_cleaned)
@@ -476,12 +476,12 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 })
                                 shopee_working_output.append(row_working)
                                 
-                                # 3. Build To Upload file structure 
+                                # 3. Build To Upload file structure (Standardized Shopee Promotion Template Headers)
                                 if belongs_in_upload:
                                     upload_row = {
                                         "Product ID": row.get(shopee_pid, ""),
                                         "Variation ID": row.get(shopee_vid, ""),
-                                        "Seller SKU": row.get(shopee_sku_col, ""),
+                                        "SKU Ref. No.": row.get(shopee_sku_col, ""),
                                         "Promotion Price": row.get(shopee_promo_col, ""),
                                         "Promotion Stock": final_stock,
                                         "Purchase Limit": final_limit
@@ -496,7 +496,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_mismatches_final = pd.DataFrame(shopee_rrp_mismatches) if shopee_rrp_mismatches else pd.DataFrame(columns=["Seller SKU", "Marketplace Status", "Marketplace Message", "RRP"])
                             df_mismatches_final.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
-                            upload_headers = ["Product ID", "Variation ID", "Seller SKU", "Promotion Price", "Promotion Stock", "Purchase Limit"]
+                            upload_headers = ["Product ID", "Variation ID", "SKU Ref. No.", "Promotion Price", "Promotion Stock", "Purchase Limit"]
                             if shopee_upload_list:
                                 df_upload_final = pd.DataFrame(shopee_upload_list)[upload_headers]
                             else:
@@ -519,7 +519,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             
                             if pim and pim in tracker_map_rrp:
                                 tracker_rrp_val = tracker_map_rrp[pim]
-                                tracker_srp_val = tracker_map_new_price[pim]
+                                tracker_srp_val = tracker_map_new_price[pim]  
                                 computed_campaign_price = tracker_rrp_val if tracker_srp_val == 0 else tracker_srp_val
                                 final_lazada_prices.append(computed_campaign_price)
                             else:
