@@ -235,8 +235,8 @@ with col2:
     
     # --- SHOPEE SECTION ---
     shopee_file = None
-    shopee_pid, shopee_vid, shopee_sku_col, shopee_parent, shopee_orig, shopee_promo_col = None, None, None, None, None, None
-    shopee_stock, shopee_limit, shopee_start_col, shopee_end_col = None, None, None, None
+    shopee_pid, shopee_pname, shopee_sku_col, shopee_parent, shopee_orig, shopee_promo_col = None, None, None, None, None, None
+    shopee_vid, shopee_vname, shopee_stock, shopee_limit = None, None, None, None
     if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
         shopee_file = st.file_uploader("3. Upload Shopee Master Template (.zip, .xlsx, .csv)", type=["zip", "xlsx", "csv"])
         if shopee_file:
@@ -246,15 +246,15 @@ with col2:
                 shopee_headers = list(df_shopee_preview.columns)
                 
                 shopee_pid = st.selectbox("Map Product ID Column", [""] + shopee_headers, key="sh_pid")
-                shopee_vid = st.selectbox("Map Variation ID Column", [""] + shopee_headers, key="sh_vid")
-                shopee_sku_col = st.selectbox("Map Seller SKU Column", [""] + shopee_headers, key="sh_sku")
+                shopee_pname = st.selectbox("Map Product Name Column (Optional)", [""] + shopee_headers, key="sh_pname")
                 shopee_parent = st.selectbox("Map Parent SKU Column", [""] + shopee_headers, key="sh_parent")
+                shopee_vid = st.selectbox("Map Variation ID Column", [""] + shopee_headers, key="sh_vid")
+                shopee_vname = st.selectbox("Map Variation Name Column (Optional)", [""] + shopee_headers, key="sh_vname")
+                shopee_sku_col = st.selectbox("Map Seller SKU Column", [""] + shopee_headers, key="sh_sku")
                 shopee_orig = st.selectbox("Map Original Price / RRP Column", [""] + shopee_headers, key="sh_orig")
                 shopee_promo_col = st.selectbox("Map Promotion Price Column", [""] + shopee_headers, key="sh_promo")
                 shopee_stock = st.selectbox("Map Promotion Stock Column (Optional)", ["", "Set Blank"] + shopee_headers, key="sh_stock")
                 shopee_limit = st.selectbox("Map Purchase Limit Column (Optional)", ["", "Set Blank"] + shopee_headers, key="sh_limit")
-                shopee_start_col = st.selectbox("Map Promotion Start Time Column", [""] + shopee_headers, key="sh_start")
-                shopee_end_col = st.selectbox("Map Promotion End Time Column", [""] + shopee_headers, key="sh_end")
             except Exception as e:
                 st.error(f"Could not open or parse Shopee raw data stream: {e}")
 
@@ -413,7 +413,6 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
                                     comments_val = "Missing SKU and Parent SKU."
                                 elif target_pim in tracker_map_rrp:
-                                    # Directly map the clean PIM ID/Color_No extracted from Master Tracker
                                     alu_no_val = target_pim
                                     tracker_rrp_val = tracker_map_rrp[target_pim]
                                     tracker_new_price = tracker_map_new_price[target_pim]
@@ -441,11 +440,32 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                         row[shopee_promo_col] = tracker_new_price
                                         belongs_in_upload = True
 
-                                # 1. Build Consolidated Sheet Row
-                                row_consolidated = row.copy()
+                                # Optional stock / limit handling
+                                if shopee_stock == "Set Blank" or not shopee_stock:
+                                    final_stock = ""
+                                else:
+                                    final_stock = row.get(shopee_stock, "")
+                                    
+                                if shopee_limit == "Set Blank" or not shopee_limit:
+                                    final_limit = ""
+                                else:
+                                    final_limit = row.get(shopee_limit, "")
+
+                                # 1. Build Consolidated Sheet Row (Aligned exactly to template requirements)
+                                row_consolidated = {
+                                    "Product ID": row.get(shopee_pid, ""),
+                                    "Product Name(Optional)": row.get(shopee_pname, ""),
+                                    "Parent SKU. Ref. No.(Optional)": row.get(shopee_parent, ""),
+                                    "Variation ID": row.get(shopee_vid, ""),
+                                    "Variation name(Optional)": row.get(shopee_vname, ""),
+                                    "SKU Ref. No.(Optional)": row.get(shopee_sku_col, ""),
+                                    "Original price (Optional)": row.get(shopee_orig, ""),
+                                    "Discount price": row.get(shopee_promo_col, "") if belongs_in_upload else "",
+                                    "Purchase Limit (Optional)": final_limit
+                                }
                                 shopee_consolidated_output.append(row_consolidated)
                                 
-                                # 2. Build Working File Row with exact target track columns
+                                # 2. Build Working File Row with tracking metadata
                                 row_working = row.copy()
                                 row_working.update({
                                     "PIM ID / Color_No": alu_no_val,
@@ -456,18 +476,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 })
                                 shopee_working_output.append(row_working)
                                 
-                                # 3. Build To Upload file structure (Handling Optional Stock/Limit values)
+                                # 3. Build To Upload file structure 
                                 if belongs_in_upload:
-                                    if shopee_stock == "Set Blank" or not shopee_stock:
-                                        final_stock = ""
-                                    else:
-                                        final_stock = row.get(shopee_stock, "")
-                                        
-                                    if shopee_limit == "Set Blank" or not shopee_limit:
-                                        final_limit = ""
-                                    else:
-                                        final_limit = row.get(shopee_limit, "")
-
                                     upload_row = {
                                         "Product ID": row.get(shopee_pid, ""),
                                         "Variation ID": row.get(shopee_vid, ""),
@@ -479,7 +489,8 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                     shopee_upload_list.append(upload_row)
 
                             # Save platform operational worksheets
-                            pd.DataFrame(shopee_consolidated_output).to_excel(writer, sheet_name="Consolidated File", index=False)
+                            consolidated_headers = ["Product ID", "Product Name(Optional)", "Parent SKU. Ref. No.(Optional)", "Variation ID", "Variation name(Optional)", "SKU Ref. No.(Optional)", "Original price (Optional)", "Discount price", "Purchase Limit (Optional)"]
+                            pd.DataFrame(shopee_consolidated_output)[consolidated_headers].to_excel(writer, sheet_name="Consolidated File", index=False)
                             pd.DataFrame(shopee_working_output).to_excel(writer, sheet_name="Working File", index=False)
                             
                             df_mismatches_final = pd.DataFrame(shopee_rrp_mismatches) if shopee_rrp_mismatches else pd.DataFrame(columns=["Seller SKU", "Marketplace Status", "Marketplace Message", "RRP"])
@@ -622,7 +633,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer.seek(0)
                 wb = openpyxl.load_workbook(output_buffer)
                 
-                target_styled_sheets = ["To Upload", "Lazada_Upload", "RRP Mismatches", "Working File"]
+                target_styled_sheets = ["To Upload", "Lazada_Upload", "RRP Mismatches", "Working File", "Consolidated File"]
                 for sheet_name in wb.sheetnames:
                     if sheet_name in target_styled_sheets or "Upload" in sheet_name:
                         ws = wb[sheet_name]
