@@ -79,6 +79,7 @@ def read_cached_file_standard(file_bytes, file_name):
     except:
         return pd.read_excel(io.BytesIO(file_bytes))
 
+@st.cache_data(show_spinner="Processing master Shopee archive...")
 def _read_shopee_stream_flexible(file_bytes, file_name):
     """
     PHASE 1: EXTRACTION & INITIAL CONSOLIDATION
@@ -450,7 +451,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                                 else:
                                     final_limit = row.get(shopee_limit, "")
 
-                                # 1. Build Consolidated Sheet Row (Aligned exactly to template layout)
+                                # 1. Build Consolidated Sheet Row (Aligned exactly to template requirements)
                                 row_consolidated = {
                                     "Product ID": row.get(shopee_pid, ""),
                                     "Product Name(Optional)": row.get(shopee_pname, ""),
@@ -660,7 +661,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Clean orange header formatted successfully on Row 1.")
+                st.success("🎉 Process Complete! Optional validation matrices compiled successfully.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
@@ -669,4 +670,4 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"A systematic error occurred during calculations: {e}")
+                st.error(f"A systematic error occurred during processing loops: {e}")
