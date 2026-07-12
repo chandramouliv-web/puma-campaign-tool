@@ -393,7 +393,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # 3. Process Shopee Channel Data
+                    # 3. Process Shopee Channel Data (ULTRA-FAST VECTORIZED ENGINE)
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         sh_bytes = shopee_file.getvalue()
                         df_shopee_raw = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
@@ -416,69 +416,88 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
                             shopee_promo = _find_col(df_shopee_raw, ["discount price", "promo", "campaign price"]) or "Discount price"
                             
-                            shopee_working_flow = []
-                            shopee_mismatches = []
-                            shopee_final_uploads = []
+                            # Standardize text types and normalize missing null values in series vectors
+                            s_sku_series = df_shopee_raw[shopee_sku].fillna("").astype(str).str.strip()
+                            s_parent_series = df_shopee_raw[shopee_parent].fillna("").astype(str).str.strip()
                             
-                            shopee_records = df_shopee_raw.to_dict('records')
-                            for row in shopee_records:
-                                raw_sku = str(row.get(shopee_sku, '')).strip() if pd.notna(row.get(shopee_sku)) else ''
-                                if raw_sku in ['nan', 'NaN', 'None', '<NA>']: raw_sku = ''
+                            s_sku_series = s_sku_series.replace(['nan', 'NaN', 'None', '<NA>'], '')
+                            s_parent_series = s_parent_series.replace(['nan', 'NaN', 'None', '<NA>'], '')
+                            
+                            # Rule 4: Seller SKU validation fallback rule execution via vectors
+                            sku_missing_mask = (s_sku_series == '')
+                            s_sku_series = s_sku_series.where(~sku_missing_mask, s_parent_series)
+                            df_shopee_raw[shopee_sku] = s_sku_series
+                            
+                            both_missing_mask = (s_sku_series == '') & (s_parent_series == '')
+                            
+                            # Vectorized map configurations
+                            norm_sku_series = s_sku_series.apply(normalize_sku)
+                            pim_series = norm_sku_series.map(ean_to_pim).fillna(s_sku_series.map(alu_to_pim)).fillna("")
+                            
+                            found_in_tracker_mask = (pim_series != "") & pim_series.isin(rrp_map)
+                            
+                            tracker_rrp_series = pim_series.map(rrp_map).fillna(0)
+                            tracker_srp_series = pim_series.map(tracker_map).fillna(0)
+                            
+                            # Safe vectorized calculation strategy conversion
+                            nums_raw = pd.to_numeric(df_shopee_raw[shopee_orig], errors='coerce').fillna(0)
+                            if sheet_rounding_strategy == "Round Up":
+                                current_price_series = nums_raw.apply(math.ceil)
+                            elif sheet_rounding_strategy == "Round":
+                                current_price_series = nums_raw.round()
+                            else:
+                                current_price_series = nums_raw.round(2)
                                 
-                                raw_parent = str(row.get(shopee_parent, '')).strip() if pd.notna(row.get(shopee_parent)) else ''
-                                if raw_parent in ['nan', 'NaN', 'None', '<NA>']: raw_parent = ''
-                                
-                                # Seller SKU / Parent SKU Fallback Validation
-                                if not raw_sku:
-                                    if raw_parent:
-                                        raw_sku = raw_parent
-                                        row[shopee_sku] = raw_sku
-                                    else:
-                                        row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Missing Seller SKU and Parent SKU."})
-                                        shopee_working_flow.append(row)
-                                        continue
-                                    
-                                norm_sku = normalize_sku(raw_sku)
-                                pim = ean_to_pim.get(norm_sku) or alu_to_pim.get(raw_sku)
-                                
-                                if not pim or pim not in rrp_map:
-                                    row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Ignore – Item Not Found in Tracker."})
-                                    shopee_working_flow.append(row)
-                                    continue
-                                    
-                                tracker_rrp_val = rrp_map[pim]
-                                tracker_srp_val = tracker_map[pim]
-                                current_price = _to_numeric_safe(row.get(shopee_orig, 0), sheet_rounding_strategy)
-                                rrp_match = (tracker_rrp_val == current_price)
-                                
-                                row.update({"ALU_NO": str(pim), "RRP": str(tracker_rrp_val), "RRP Check": str(rrp_match), "SRP": str(tracker_srp_val)})
-                                
-                                if not rrp_match:
-                                    row['Comments'] = "RRP Mismatch"
-                                    shopee_working_flow.append(row)
-                                    shopee_mismatches.append({"Seller SKU": raw_sku, "Marketplace Status": "", "Marketplace Message": "", "RRP": tracker_rrp_val})
-                                    continue
-                                if tracker_srp_val == 0:
-                                    row['Comments'] = "ignore - SRP is Zero"
-                                    shopee_working_flow.append(row)
-                                    continue
-                                
-                                row['Comments'] = "RRP is true and SRP is not equal to RRP - To be in Upload File"
-                                row[shopee_promo] = tracker_srp_val
-                                shopee_working_flow.append(row)
-                                shopee_final_uploads.append(row.copy())
-                                
-                            pd.DataFrame(shopee_working_flow).to_excel(writer, sheet_name="Working File", index=False)
-                            df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
+                            rrp_match_series = (tracker_rrp_series == current_price_series)
+                            
+                            # Generate base layout changes instantly via pandas conditions
+                            df_shopee_raw["ALU_NO"] = pim_series.where(found_in_tracker_mask, "")
+                            df_shopee_raw["RRP"] = tracker_rrp_series.where(found_in_tracker_mask, 0).astype(str)
+                            df_shopee_raw["RRP Check"] = rrp_match_series.astype(str)
+                            df_shopee_raw["SRP"] = tracker_srp_series.where(found_in_tracker_mask, 0).astype(str)
+                            
+                            # Vectorized assignment of conditional operational workflow status comments
+                            comments_series = pd.Series("Ignore – Item Not Found in Tracker.", index=df_shopee_raw.index)
+                            comments_series = comments_series.where(~both_missing_mask, "Missing Seller SKU and Parent SKU.")
+                            
+                            tracker_valid_rows = found_in_tracker_mask & (~both_missing_mask)
+                            comments_series = comments_series.where(~(tracker_valid_rows & ~rrp_match_series), "RRP Mismatch")
+                            comments_series = comments_series.where(
+                                ~(tracker_valid_rows & rrp_match_series & (tracker_srp_series == 0)), 
+                                "ignore - SRP is Zero"
+                            )
+                            comments_series = comments_series.where(
+                                ~(tracker_valid_rows & rrp_match_series & (tracker_srp_series != 0)), 
+                                "RRP is true and SRP is not equal to RRP - To be in Upload File"
+                            )
+                            df_shopee_raw["Comments"] = comments_series
+                            
+                            # Save working log configurations instantly
+                            df_shopee_raw.to_excel(writer, sheet_name="Working File", index=False)
+                            
+                            # Generate mismatch records quickly
+                            mismatch_mask = tracker_valid_rows & (~rrp_match_series)
+                            if mismatch_mask.any():
+                                df_sh_mismatch = pd.DataFrame({
+                                    "Seller SKU": s_sku_series[mismatch_mask],
+                                    "Marketplace Status": "",
+                                    "Marketplace Message": "",
+                                    "RRP": tracker_rrp_series[mismatch_mask]
+                                })
+                            else:
+                                df_sh_mismatch = pd.DataFrame([{"Message": "No mismatches detected"}])
                             df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
-                            if shopee_final_uploads:
-                                df_sh_upload = pd.DataFrame(shopee_final_uploads)
+                            # Save To Upload segment quickly without modifying layout configurations
+                            upload_mask = tracker_valid_rows & rrp_match_series & (tracker_srp_series != 0)
+                            if upload_mask.any():
+                                df_sh_upload = df_shopee_raw[upload_mask].copy()
+                                df_sh_upload[shopee_promo] = tracker_srp_series[upload_mask]
                                 df_sh_upload.drop(columns=['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments'], errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
                             else:
                                 pd.DataFrame([{"Message": "All entries skipped based on filtering rules."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
-                    # 4. Process Lazada Channel Data
+                    # 4. Process Lazada Channel Data (UNTOUCHED ORIGINAL CODE)
                     if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
                         lz_bytes = lazada_file.getvalue()
                         df_lazada = read_cached_file_standard(lz_bytes, lazada_file.name)
@@ -501,7 +520,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         df_lazada[lazada_price] = final_lazada_prices
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # 5. Process Zalora Channel Data
+                    # 5. Process Zalora Channel Data (UNTOUCHED ORIGINAL CODE)
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         zal_bytes = zalora_file.getvalue()
                         df_zalora_raw = read_cached_file_standard(zal_bytes, zalora_file.name)
