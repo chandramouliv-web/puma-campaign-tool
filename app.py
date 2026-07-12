@@ -64,6 +64,7 @@ def get_cached_clean_headers_and_df(file_bytes, file_name, target_sheet=None):
             clean_headers.append(f"[{col_letter}] {clean_name}")
 
         full_df.columns = clean_headers
+        # Slice raw records into memory while avoiding extra transformations
         data_df = full_df.iloc[3:].reset_index(drop=True)
         return clean_headers, data_df
     except Exception as e:
@@ -79,13 +80,23 @@ def read_cached_file_standard(file_bytes, file_name):
     except:
         return pd.read_excel(io.BytesIO(file_bytes))
 
-@st.cache_data(show_spinner="Processing master Shopee archive...")
+def clean_shopee_dataframe(df):
+    """Applies Shopee-specific cleanings: trims text, strips non-printable chars, normalizes nulls, preserves numeric types."""
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].apply(lambda x: re.sub(r'[^\x20-\x7E\t\n\r]', '', str(x)).strip() if pd.notna(x) else x)
+            df[col] = df[col].replace(['', 'nan', 'NaN', 'None', 'null', 'NULL'], pd.NA)
+        else:
+            df[col] = df[col].replace(['nan', 'NaN', 'None', 'null', 'NULL'], pd.NA)
+    return df
+
+@st.cache_data(show_spinner="Processing master template...")
 def _read_shopee_stream_flexible(file_bytes, file_name):
-    """Extracts spreadsheet files inside an uploaded ZIP cluster or a standalone sheet."""
-    dfs = []
+    """Cleans multi-format compressed data instantly via memory cache loops with standardized formats."""
     if file_name.endswith('.zip'):
+        dfs = []
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-            names = sorted(n for n in zf.namelist() if n.endswith(('.xlsx', '.xls', '.csv')))
+            names = sorted(n for n in zf.namelist() if n.endswith(('.xlsx', '.csv')))
             if not names:
                 raise ValueError("No active dataset files located inside the ZIP bundle.")
             for name in names:
@@ -100,10 +111,12 @@ def _read_shopee_stream_flexible(file_bytes, file_name):
                     
                     df_cleaned = auto_detect_shopee_header(df)
                     if isinstance(df_cleaned, pd.DataFrame) and not df_cleaned.empty:
+                        df_cleaned = clean_shopee_dataframe(df_cleaned)
                         dfs.append(df_cleaned)
         if not dfs:
             return pd.DataFrame()
         consolidated_df = pd.concat(dfs, ignore_index=True)
+        consolidated_df.drop_duplicates(inplace=True)
         return consolidated_df
         
     if file_name.endswith('.csv'):
@@ -113,13 +126,13 @@ def _read_shopee_stream_flexible(file_bytes, file_name):
             df = pd.read_excel(io.BytesIO(file_bytes), header=None, engine='calamine')
         except:
             df = pd.read_excel(io.BytesIO(file_bytes), header=None)
-    return auto_detect_shopee_header(df)
+    df_cleaned = auto_detect_shopee_header(df)
+    return clean_shopee_dataframe(df_cleaned)
 
 def auto_detect_shopee_header(df):
-    """Scans structural headers to detect standard platform transaction export lines."""
     for idx in range(min(15, len(df))):
         row_str = df.iloc[idx].fillna("").astype(str).str.lower().str.strip().values
-        if any("product id" in r or "variation id" in r or "sku ref" in r or "parent sku" in r or "seller sku" in r for r in row_str):
+        if any("product id" in r or "variation id" in r or "sku ref" in r or "parent sku" in r for r in row_str):
             headers = df.iloc[idx].fillna("").astype(str).str.strip().values
             clean_headers = [h if (h and h.lower() != "nan") else f"Blank_Col_{i}" for i, h in enumerate(headers)]
             new_df = df.iloc[idx+1:].copy()
@@ -132,10 +145,9 @@ def auto_detect_shopee_header(df):
     return df
 
 def normalize_sku(sku):
-    """Applies whitespace strip, converts characters to lowercase, and changes hyphens to underscores."""
-    if pd.isna(sku) or not str(sku).strip():
+    if pd.isna(sku) or not sku:
         return ""
-    return str(sku).strip().lower().replace('-', '_')
+    return str(sku).strip().replace('-', '_').lower()
 
 def clean_id_str(val):
     if pd.isna(val):
@@ -159,7 +171,7 @@ def _apply_rounding_strategy(val, strategy_mode):
     except:
         return 0
 
-def _to_numeric_safe(val, strategy_mode="Follow Exact Tracker Value"):
+def _to_numeric_safe(val, strategy_mode):
     if pd.isna(val):
         return 0
     try:
@@ -192,7 +204,7 @@ def is_last_day_of_month(date_val):
 # 🎨 STREAMLIT HIGH-RESPONSIVENESS UI
 # ==========================================
 st.title("🚀 Marketplace Price Automator")
-st.write("Dynamic pricing optimization and multi-channel structural automation.")
+st.write("Dynamic caching enabled. Process 100k+ rows instantly without losing selector UI performance.")
 
 mode = st.selectbox(
     "Select Automation Mode",
@@ -211,6 +223,7 @@ with col1:
     df_tracker = None
     
     if tracker_file:
+        # Cache file streams into memory bytes blocks
         t_bytes = tracker_file.getvalue()
         if tracker_file.name.endswith(('.xlsx', '.xls')):
             t_sheets = get_cached_sheet_names(t_bytes, tracker_file.name)
@@ -235,11 +248,12 @@ with col1:
             
         tracker_headers, df_tracker = get_cached_clean_headers_and_df(t_bytes, tracker_file.name, target_sheet=tracker_sheet)
         if df_tracker is not None:
-            tracker_pim = st.selectbox("Map PIM ID Column (e.g. Color_No)", [""] + tracker_headers, key="t_pim")
-            tracker_rrp = st.selectbox("Map Regular RRP Column (e.g. PH EC RRP)", [""] + tracker_headers, key="t_rrp")
-            tracker_md = st.selectbox("Map Campaign Markdown Price Column (e.g. PH MD Price)", [""] + tracker_headers, key="t_md")
+            tracker_pim = st.selectbox("Map PIM ID Column", [""] + tracker_headers, key="t_pim")
+            tracker_rrp = st.selectbox("Map Regular RRP Column", [""] + tracker_headers, key="t_rrp")
+            tracker_md = st.selectbox("Map Special / Campaign / Markdown Price Column", [""] + tracker_headers, key="t_md")
 
     st.markdown("---")
+
     sku_file = st.file_uploader("2. Upload SKU Map File (.csv, .xlsx)", type=["csv", "xlsx"])
     sku_sku, sku_pim = None, None
     if sku_file:
@@ -260,8 +274,7 @@ with col2:
     
     # --- SHOPEE SECTION ---
     shopee_file = None
-    shopee_pid, shopee_pname, shopee_sku_col, shopee_parent, shopee_orig, shopee_promo_col = None, None, None, None, None, None
-    shopee_vid, shopee_vname, shopee_stock, shopee_limit = None, None, None, None
+    shopee_sku, shopee_parent, shopee_orig = None, None, None
     if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
         shopee_file = st.file_uploader("3. Upload Shopee Master Template (.zip, .xlsx, .csv)", type=["zip", "xlsx", "csv"])
         if shopee_file:
@@ -270,16 +283,9 @@ with col2:
                 df_shopee_preview = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
                 shopee_headers = list(df_shopee_preview.columns)
                 
-                shopee_pid = st.selectbox("Map Product ID Column", [""] + shopee_headers, key="sh_pid")
-                shopee_pname = st.selectbox("Map Product Name Column (Optional)", [""] + shopee_headers, key="sh_pname")
-                shopee_parent = st.selectbox("Map Parent SKU Column", [""] + shopee_headers, key="sh_parent")
-                shopee_vid = st.selectbox("Map Variation ID Column", [""] + shopee_headers, key="sh_vid")
-                shopee_vname = st.selectbox("Map Variation Name Column (Optional)", [""] + shopee_headers, key="sh_vname")
-                shopee_sku_col = st.selectbox("Map Seller SKU Column", [""] + shopee_headers, key="sh_sku")
-                shopee_orig = st.selectbox("Map Original Price / RRP Column", [""] + shopee_headers, key="sh_orig")
-                shopee_promo_col = st.selectbox("Map Promotion Price Column", [""] + shopee_headers, key="sh_promo")
-                shopee_stock = st.selectbox("Map Promotion Stock Column (Optional)", ["", "Set Blank"] + shopee_headers, key="sh_stock")
-                shopee_limit = st.selectbox("Map Purchase Limit Column (Optional)", ["", "Set Blank"] + shopee_headers, key="sh_limit")
+                shopee_sku = st.selectbox("Map Shopee SKU Column (e.g. SKU)", [""] + shopee_headers, key="sh_sku")
+                shopee_parent = st.selectbox("Map Shopee Parent SKU Column", [""] + shopee_headers, key="sh_parent")
+                shopee_orig = st.selectbox("Map Shopee Original Price Column", [""] + shopee_headers, key="sh_orig")
             except Exception as e:
                 st.error(f"Could not open or parse Shopee raw data stream: {e}")
 
@@ -305,6 +311,7 @@ with col2:
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
         st.markdown("---")
         zalora_file = st.file_uploader("5. Upload Master Zalora Price Template (.xlsx)", type=["xlsx"], key="zal_master")
+        
         if zalora_file:
             zal_bytes = zalora_file.getvalue()
             try:
@@ -315,7 +322,7 @@ with col2:
                 zalora_start = st.selectbox("Map Zalora Sale Start Date Column (e.g. SaleStartDate)", [""] + zalora_headers, key="zal_start")
                 zalora_end = st.selectbox("Map Zalora Sale End Date Column (e.g. SaleEndDate)", [""] + zalora_headers, key="zal_end")
                 
-                st.caption("🗓️ Set Manual Campaign Run Windows")
+                st.caption("🗓️ **Set Manual Campaign Run Windows**")
                 zal_dates_col1, zal_dates_col2 = st.columns(2)
                 with zal_dates_col1:
                     zal_d1 = st.date_input("Zalora Start Date", datetime(2026, 7, 9))
@@ -336,38 +343,42 @@ st.markdown("---")
 if st.button("🚀 Run Automation Process", type="primary", use_container_width=True):
     error_found = False
     if not tracker_file or not tracker_pim or not tracker_rrp or not tracker_md:
-        st.error("❌ Tracker layout mappings are invalid.")
-        error_found = True
+        st.error("❌ Tracker layout mappings are invalid."); error_found = True
     if not sku_file or not sku_sku or not sku_pim:
-        st.error("❌ Reference SKU mapping parameters must be fully bound.")
-        error_found = True
-    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku_col or not shopee_orig or not shopee_promo_col):
-        st.error("❌ Shopee template columns (Seller SKU, Original Price, and Promotion Price) remain unassigned.")
-        error_found = True
+        st.error("❌ Reference SKU mapping parameters must be fully bound."); error_found = True
+    if mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"] and (not shopee_file or not shopee_sku or not shopee_orig):
+        st.error("❌ Shopee template columns remain unassigned."); error_found = True
     if mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"] and (not lazada_file or not lazada_sku or not lazada_price):
-        st.error("❌ Lazada columns remain unassigned.")
-        error_found = True
+        st.error("❌ Lazada columns remain unassigned."); error_found = True
     if mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"] and (not zalora_file or not zalora_sku or not zalora_promo or not zalora_orig or not zalora_start or not zalora_end):
-        st.error("❌ Zalora tracking dimensions are unassigned.")
-        error_found = True
+        st.error("❌ Zalora tracking dimensions are unassigned."); error_found = True
 
     if not error_found:
+        # Pull saved UI byte buffers instantly
         s_bytes = sku_file.getvalue()
         t_bytes = tracker_file.getvalue()
         
         with st.spinner("Executing optimized system pipeline lookups..."):
             try:
-                # -------------------------------------------------------------
-                # PHASE 2: MASTER TRACKER & SKU MAPPING
-                # -------------------------------------------------------------
+                # 1. High Performance In-Memory SKU Mapping Ingestion via fast vectors
                 df_sku = read_cached_file_standard(s_bytes, sku_file.name)
                 sku_raw_arr = df_sku[sku_sku].astype(str).values
                 pim_raw_arr = df_sku[sku_pim].astype(str).values
                 
-                normalized_sku_to_pim = {}
-                normalized_sku_to_new_price = {}
-                tracker_map_new_price = {}
-                tracker_map_rrp = {}
+                ean_to_pim = {}
+                alu_to_pim = {}
+                
+                for idx_s in range(len(sku_raw_arr)):
+                    raw_s = sku_raw_arr[idx_s].strip()
+                    norm_s = normalize_sku(raw_s)
+                    pim_clean = clean_id_str(pim_raw_arr[idx_s])
+                    
+                    if norm_s: ean_to_pim[norm_s] = pim_clean
+                    if raw_s: alu_to_pim[raw_s] = pim_clean
+
+                # 2. Parse Tracker Data into high-performance maps
+                tracker_map = {}
+                rrp_map = {}
                 
                 pim_tracker_raw = df_tracker[tracker_pim].values
                 rrp_tracker_raw = pd.to_numeric(df_tracker[tracker_rrp], errors='coerce').fillna(0).values
@@ -375,158 +386,99 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                 
                 for t_idx in range(len(df_tracker)):
                     pim_val = clean_id_str(pim_tracker_raw[t_idx])
-                    if not pim_val:
-                        continue
-                        
-                    raw_rrp = rrp_tracker_raw[t_idx]
-                    raw_md = md_tracker_raw[t_idx]
-                    
-                    if raw_md == 0 or pd.isna(raw_md):
-                        new_price = _apply_rounding_strategy(raw_rrp, sheet_rounding_strategy)
-                    else:
-                        new_price = _apply_rounding_strategy(raw_md, sheet_rounding_strategy)
-                        
-                    tracker_map_new_price[pim_val] = new_price
-                    tracker_map_rrp[pim_val] = _apply_rounding_strategy(raw_rrp, sheet_rounding_strategy)
-
-                for idx_s in range(len(sku_raw_arr)):
-                    raw_s = sku_raw_arr[idx_s].strip()
-                    norm_s = normalize_sku(raw_s)
-                    pim_clean = clean_id_str(pim_raw_arr[idx_s])
-                    
-                    if norm_s and pim_clean:
-                        normalized_sku_to_pim[norm_s] = pim_clean
-                        if pim_clean in tracker_map_new_price:
-                            normalized_sku_to_new_price[norm_s] = tracker_map_new_price[pim_clean]
+                    if not pim_val: continue
+                    tracker_map[pim_val] = _apply_rounding_strategy(md_tracker_raw[t_idx], sheet_rounding_strategy)
+                    rrp_map[pim_val] = _apply_rounding_strategy(rrp_tracker_raw[t_idx], sheet_rounding_strategy)
 
                 output_buffer = io.BytesIO()
                 with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                     
-                    # -------------------------------------------------------------
-                    # PHASE 1 & 3: SHOPEE ENGINE REFACTOR WITH TARGET COLS
-                    # -------------------------------------------------------------
+                    # 3. Process Shopee Channel Data
                     if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
                         sh_bytes = shopee_file.getvalue()
                         df_shopee_raw = _read_shopee_stream_flexible(sh_bytes, shopee_file.name)
-                        
                         if not df_shopee_raw.empty:
+                            # Dynamic allocation of the new SRP column immediately following the Price column
+                            price_col = None
+                            for c in df_shopee_raw.columns:
+                                if str(c).strip().lower() == 'price':
+                                    price_col = c
+                                    break
+                            if price_col is None:
+                                price_col = shopee_orig
+                            
+                            if price_col in df_shopee_raw.columns:
+                                p_idx = list(df_shopee_raw.columns).index(price_col)
+                                df_shopee_raw.insert(p_idx + 1, "SRP", "")
+                            else:
+                                df_shopee_raw["SRP"] = ""
+
+                            df_shopee_raw.to_excel(writer, sheet_name="Consolidated File", index=False)
+                            shopee_promo = _find_col(df_shopee_raw, ["discount price", "promo", "campaign price"]) or "Discount price"
+                            
+                            shopee_working_flow = []
+                            shopee_mismatches = []
+                            shopee_final_uploads = []
+                            
                             shopee_records = df_shopee_raw.to_dict('records')
-                            
-                            shopee_consolidated_output = []
-                            shopee_working_output = []
-                            shopee_rrp_mismatches = []
-                            shopee_upload_list = []
-                            
                             for row in shopee_records:
-                                raw_sku = str(row.get(shopee_sku_col, '')).strip()
-                                raw_parent = str(row.get(shopee_parent, '')).strip()
+                                raw_sku = str(row.get(shopee_sku, '')).strip() if pd.notna(row.get(shopee_sku)) else ''
+                                if raw_sku in ['nan', 'NaN', 'None', '<NA>']: raw_sku = ''
                                 
-                                # Fallback Rule: Replace blank Seller SKU with Parent SKU
-                                if not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '':
-                                    raw_sku = raw_parent
-                                    row[shopee_sku_col] = raw_sku
+                                raw_parent = str(row.get(shopee_parent, '')).strip() if pd.notna(row.get(shopee_parent)) else ''
+                                if raw_parent in ['nan', 'NaN', 'None', '<NA>']: raw_parent = ''
+                                
+                                # Seller SKU / Parent SKU Fallback Validation
+                                if not raw_sku:
+                                    if raw_parent:
+                                        raw_sku = raw_parent
+                                        row[shopee_sku] = raw_sku
+                                    else:
+                                        row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Missing Seller SKU and Parent SKU."})
+                                        shopee_working_flow.append(row)
+                                        continue
                                     
                                 norm_sku = normalize_sku(raw_sku)
-                                target_pim = normalized_sku_to_pim.get(norm_sku, "")
+                                pim = ean_to_pim.get(norm_sku) or alu_to_pim.get(raw_sku)
                                 
-                                alu_no_val = ""
-                                rrp_val = ""
-                                rrp_check_val = "False"
-                                srp_val = ""
-                                comments_val = "Ignore – Item Not Found in Tracker."
-                                belongs_in_upload = False
-                                current_orig_price = _to_numeric_safe(row.get(shopee_orig, 0), sheet_rounding_strategy)
-                                
-                                if (not raw_sku or raw_sku.lower() == 'nan' or raw_sku == '') and (not raw_parent or raw_parent.lower() == 'nan' or raw_parent == ''):
-                                    comments_val = "Missing SKU and Parent SKU."
-                                elif target_pim in tracker_map_rrp:
-                                    alu_no_val = target_pim
-                                    tracker_rrp_val = tracker_map_rrp[target_pim]
-                                    tracker_new_price = tracker_map_new_price[target_pim]
+                                if not pim or pim not in rrp_map:
+                                    row.update({"ALU_NO": "", "RRP": "", "RRP Check": "False", "SRP": "", "Comments": "Ignore – Item Not Found in Tracker."})
+                                    shopee_working_flow.append(row)
+                                    continue
                                     
-                                    rrp_val = str(tracker_rrp_val)
-                                    srp_val = str(tracker_new_price)
-                                    
-                                    rrp_match = (tracker_rrp_val == current_orig_price)
-                                    rrp_check_val = str(rrp_match)
-                                    
-                                    if not rrp_match:
-                                        comments_val = "RRP Mismatch"
-                                        shopee_rrp_mismatches.append({
-                                            "Seller SKU": raw_sku,
-                                            "Marketplace Status": "",
-                                            "Marketplace Message": "",
-                                            "RRP": tracker_rrp_val
-                                        })
-                                    elif tracker_new_price == 0:
-                                        comments_val = "Discount Price is Blank"
-                                    elif tracker_rrp_val == tracker_new_price:
-                                        comments_val = "Remove: RRP = Discount"
-                                    else:
-                                        comments_val = "Valid Update"
-                                        row[shopee_promo_col] = tracker_new_price
-                                        belongs_in_upload = True
-
-                                if shopee_stock == "Set Blank" or not shopee_stock:
-                                    final_stock = ""
-                                else:
-                                    final_stock = row.get(shopee_stock, "")
-                                    
-                                if shopee_limit == "Set Blank" or not shopee_limit:
-                                    final_limit = ""
-                                else:
-                                    final_limit = row.get(shopee_limit, "")
-
-                                # 1. Build Consolidated Sheet Row
-                                row_consolidated = {
-                                    "Product ID": row.get(shopee_pid, ""),
-                                    "Product Name(Optional)": row.get(shopee_pname, ""),
-                                    "Parent SKU. Ref. No.(Optional)": row.get(shopee_parent, ""),
-                                    "Variation ID": row.get(shopee_vid, ""),
-                                    "Variation name(Optional)": row.get(shopee_vname, ""),
-                                    "SKU Ref. No.(Optional)": row.get(shopee_sku_col, ""),
-                                    "Original price (Optional)": row.get(shopee_orig, ""),
-                                    "Discount price": row.get(shopee_promo_col, "") if belongs_in_upload else "",
-                                    "Purchase Limit (Optional)": final_limit
-                                }
+                                tracker_rrp_val = rrp_map[pim]
+                                tracker_srp_val = tracker_map[pim]
+                                current_price = _to_numeric_safe(row.get(shopee_orig, 0), sheet_rounding_strategy)
+                                rrp_match = (tracker_rrp_val == current_price)
                                 
-                                row_cons_with_qc = row_consolidated.copy()
-                                row_cons_with_qc["QC Comment"] = comments_val
-                                shopee_consolidated_output.append(row_cons_with_qc)
+                                row.update({"ALU_NO": str(pim), "RRP": str(tracker_rrp_val), "RRP Check": str(rrp_match), "SRP": str(tracker_srp_val)})
                                 
-                                # 2. Build Working File Row with metadata
-                                row_working = row.copy()
-                                row_working.update({
-                                    "PIM ID / Color_No": alu_no_val,
-                                    "RRP": rrp_val,
-                                    "RRP Check": rrp_check_val,
-                                    "SRP": srp_val,
-                                    "Comments": comments_val
-                                })
-                                shopee_working_output.append(row_working)
+                                if not rrp_match:
+                                    row['Comments'] = "RRP Mismatch"
+                                    shopee_working_flow.append(row)
+                                    shopee_mismatches.append({"Seller SKU": raw_sku, "Marketplace Status": "", "Marketplace Message": "", "RRP": tracker_rrp_val})
+                                    continue
+                                if tracker_srp_val == 0:
+                                    row['Comments'] = "ignore - SRP is Zero"
+                                    shopee_working_flow.append(row)
+                                    continue
                                 
-                                # 3. Build To Upload file structure
-                                if belongs_in_upload:
-                                    shopee_upload_list.append(row_consolidated)
-
-                            # Save operational worksheets
-                            consolidated_headers = ["Product ID", "Product Name(Optional)", "Parent SKU. Ref. No.(Optional)", "Variation ID", "Variation name(Optional)", "SKU Ref. No.(Optional)", "Original price (Optional)", "Discount price", "Purchase Limit (Optional)", "QC Comment"]
-                            pd.DataFrame(shopee_consolidated_output)[consolidated_headers].to_excel(writer, sheet_name="Consolidated File", index=False)
-                            pd.DataFrame(shopee_working_output).to_excel(writer, sheet_name="Working File", index=False)
+                                row['Comments'] = "RRP is true and SRP is not equal to RRP - To be in Upload File"
+                                row[shopee_promo] = tracker_srp_val
+                                shopee_working_flow.append(row)
+                                shopee_final_uploads.append(row.copy())
+                                
+                            pd.DataFrame(shopee_working_flow).to_excel(writer, sheet_name="Working File", index=False)
+                            df_sh_mismatch = pd.DataFrame(shopee_mismatches) if shopee_mismatches else pd.DataFrame([{"Message": "No mismatches detected"}])
+                            df_sh_mismatch.to_excel(writer, sheet_name="RRP Mismatches", index=False)
                             
-                            df_mismatches_final = pd.DataFrame(shopee_rrp_mismatches) if shopee_rrp_mismatches else pd.DataFrame(columns=["Seller SKU", "Marketplace Status", "Marketplace Message", "RRP"])
-                            df_mismatches_final.to_excel(writer, sheet_name="Shopee_RRP_Mismatches", index=False)
-                            
-                            upload_headers = ["Product ID", "Product Name(Optional)", "Parent SKU. Ref. No.(Optional)", "Variation ID", "Variation name(Optional)", "SKU Ref. No.(Optional)", "Original price (Optional)", "Discount price", "Purchase Limit (Optional)"]
-                            if shopee_upload_list:
-                                df_upload_final = pd.DataFrame(shopee_upload_list)[upload_headers]
+                            if shopee_final_uploads:
+                                df_sh_upload = pd.DataFrame(shopee_final_uploads)
+                                df_sh_upload.drop(columns=['ALU_NO', 'RRP', 'RRP Check', 'SRP', 'Comments'], errors='ignore').to_excel(writer, sheet_name="To Upload", index=False)
                             else:
-                                df_upload_final = pd.DataFrame(columns=upload_headers)
-                            df_upload_final.to_excel(writer, sheet_name="Shopee_Upload", index=False)
+                                pd.DataFrame([{"Message": "All entries skipped based on filtering rules."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
-                    # -------------------------------------------------------------
                     # 4. Process Lazada Channel Data
-                    # -------------------------------------------------------------
                     if lazada_file and mode in ["🏪 Lazada Only", "🔄 Run All Marketplace Channels"]:
                         lz_bytes = lazada_file.getvalue()
                         df_lazada = read_cached_file_standard(lz_bytes, lazada_file.name)
@@ -536,12 +488,12 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         final_lazada_prices = []
                         for i in range(len(df_lazada)):
                             norm_lz_sku = normalize_sku(lazada_skus[i])
-                            pim = normalized_sku_to_pim.get(norm_lz_sku)
+                            pim = ean_to_pim.get(norm_lz_sku) or alu_to_pim.get(str(lazada_skus[i]).strip())
                             
-                            if pim and pim in tracker_map_rrp:
-                                tracker_rrp_val = tracker_map_rrp[pim]
-                                tracker_srp_val = tracker_map_new_price[pim]
-                                computed_campaign_price = tracker_rrp_val if tracker_srp_val == 0 else tracker_srp_val
+                            if pim and pim in rrp_map:
+                                tracker_rrp_val = rrp_map[pim]
+                                tracker_srp_val = tracker_map[pim]
+                                computed_campaign_price = _apply_rounding_strategy(tracker_rrp_val, sheet_rounding_strategy) if tracker_srp_val == 0 else _apply_rounding_strategy(tracker_srp_val, sheet_rounding_strategy)
                                 final_lazada_prices.append(computed_campaign_price)
                             else:
                                 final_lazada_prices.append(lazada_prices[i])
@@ -549,9 +501,7 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         df_lazada[lazada_price] = final_lazada_prices
                         df_lazada.to_excel(writer, sheet_name="Lazada_Upload", index=False)
 
-                    # -------------------------------------------------------------
                     # 5. Process Zalora Channel Data
-                    # -------------------------------------------------------------
                     if zalora_file and mode in ["👗 Zalora Only", "🔄 Run All Marketplace Channels"]:
                         zal_bytes = zalora_file.getvalue()
                         df_zalora_raw = read_cached_file_standard(zal_bytes, zalora_file.name)
@@ -570,15 +520,15 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                         for row_dict in zalora_records:
                             sku = str(row_dict[temp_sku_col]).strip()
                             norm_sku = normalize_sku(sku)
-                            pim = normalized_sku_to_pim.get(norm_sku)
+                            pim = alu_to_pim.get(sku) or ean_to_pim.get(norm_sku)
                             
-                            if not pim or pim not in tracker_map_rrp:
+                            if not pim or pim not in rrp_map:
                                 row_dict.update({"ALU_NO/Color_No": "", "RRP/PH EC RRP": "", "RRP check (I=D)": "False", "SRP/PH MD Price": "", "SRP check (K=E)": "False", "Comments": "Ignore – Item Not Found in Tracker."})
                                 working_flow_rows.append(row_dict)
                                 continue
                                 
-                            tracker_rrp_val = tracker_map_rrp[pim]
-                            tracker_srp_val = tracker_map_new_price[pim]  
+                            tracker_rrp_val = rrp_map[pim]
+                            tracker_srp_val = tracker_map[pim]  
                             current_rrp = _to_numeric_safe(row_dict[temp_rrp_col], sheet_rounding_strategy)
                             current_srp = _to_numeric_safe(row_dict[temp_srp_col], sheet_rounding_strategy)
                             
@@ -649,15 +599,13 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             pd.DataFrame([{"Message": "No updates required."}]).to_excel(writer, sheet_name="To Upload", index=False)
 
                 # =========================================================
-                # 🎨 POST-PROCESSING STYLE ENGINE: ENFORCE EX_ORANGE HEADERS
+                # 🎨 POST-PROCESSING STYLE ENGINE: ENFORCE EX_ORANGE HEADER FORMATTING
                 # =========================================================
                 output_buffer.seek(0)
-                wb = openpyxl.load_workbook(output_buffer)
-                target_styled_sheets = ["To Upload", "Lazada_Upload", "Shopee_RRP_Mismatches", "Shopee_Upload", "Working File", "Consolidated File", "Working Flow"]
-                
-                for sheet_name in wb.sheetnames:
-                    if sheet_name in target_styled_sheets or "Upload" in sheet_name:
-                        ws = wb[sheet_name]
+                if shopee_file and mode in ["🛍 Shopee Only", "🔄 Run All Marketplace Channels"]:
+                    wb = openpyxl.load_workbook(output_buffer)
+                    if "To Upload" in wb.sheetnames:
+                        ws = wb["To Upload"]
                         
                         orange_fill = PatternFill(start_color="FF5722", end_color="FF5722", fill_type="solid")
                         white_bold_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -678,12 +626,12 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                             col_letter = get_column_letter(col[0].column)
                             ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
                             
-                new_buffer = io.BytesIO()
-                wb.save(new_buffer)
-                output_buffer = new_buffer
+                    new_buffer = io.BytesIO()
+                    wb.save(new_buffer)
+                    output_buffer = new_buffer
 
                 output_buffer.seek(0)
-                st.success("🎉 Process Complete! Optional validation matrices compiled successfully.")
+                st.success("🎉 Process Complete! Clean orange header formatted successfully on Row 1.")
                 st.download_button(
                     label="📥 Download Consolidated Marketplace Workbook",
                     data=output_buffer,
@@ -692,4 +640,4 @@ if st.button("🚀 Run Automation Process", type="primary", use_container_width=
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"A systematic error occurred during processing loops: {e}")
+                st.error(f"A systematic error occurred during calculations: {e}")
